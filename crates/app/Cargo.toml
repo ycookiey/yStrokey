@@ -1,0 +1,15 @@
+[package]
+name = "ystrokey"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ystrokey"
+path = "src/main.rs"
+
+[dependencies]
+ystrokey-core = { path = "../core" }
+ystrokey-input = { path = "../input" }
+ystrokey-render = { path = "../render" }
+windows = { workspace = true }
+log = { workspace = true }
