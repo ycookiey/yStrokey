@@ -10,5 +10,8 @@ nul
 *.swp
 *.swo
 
+# Build
+/target/
+
 # Logs
 *.log

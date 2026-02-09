@@ -1,0 +1,9 @@
+[package]
+name = "ystrokey-input"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ystrokey-core = { path = "../core" }
+windows = { workspace = true }
+log = { workspace = true }
