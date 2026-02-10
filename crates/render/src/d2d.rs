@@ -106,9 +106,9 @@ impl D2DRenderer {
                 )
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
-            // テキストブラシ (#FFFFFF)
+            // テキストブラシ (StyleConfig.text_color)
             let text_brush = render_target
-                .CreateSolidColorBrush(&parse_color("#FFFFFF"), None)
+                .CreateSolidColorBrush(&parse_color(&style.text_color), None)
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
             // Up状態テキストブラシ (#1565C0)
@@ -118,7 +118,7 @@ impl D2DRenderer {
 
             // 背景ブラシ群
             let key_down_brush = render_target
-                .CreateSolidColorBrush(&parse_color("#2196F3"), None)
+                .CreateSolidColorBrush(&parse_color(&style.key_down_color), None)
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
             let key_up_brush = render_target
@@ -130,7 +130,7 @@ impl D2DRenderer {
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
             let shortcut_brush = render_target
-                .CreateSolidColorBrush(&parse_color("#4CAF50"), None)
+                .CreateSolidColorBrush(&parse_color(&style.shortcut_color), None)
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
             let ime_brush = render_target
@@ -248,6 +248,21 @@ impl D2DRenderer {
             &self.up_text_brush
         } else {
             &self.text_brush
+        }
+    }
+
+    /// StyleConfig変更時にブラシを再生成
+    pub fn update_style(&mut self, style: &StyleConfig) {
+        unsafe {
+            if let Ok(b) = self.render_target.CreateSolidColorBrush(&parse_color(&style.text_color), None) {
+                self.text_brush = b;
+            }
+            if let Ok(b) = self.render_target.CreateSolidColorBrush(&parse_color(&style.key_down_color), None) {
+                self.key_down_brush = b;
+            }
+            if let Ok(b) = self.render_target.CreateSolidColorBrush(&parse_color(&style.shortcut_color), None) {
+                self.shortcut_brush = b;
+            }
         }
     }
 

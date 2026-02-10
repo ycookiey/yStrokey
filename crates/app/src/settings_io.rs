@@ -11,6 +11,23 @@ fn win32_err(e: impl std::fmt::Display) -> ystrokey_core::AppError {
     ystrokey_core::AppError::Win32(e.to_string())
 }
 
+struct ComGuard;
+
+impl ComGuard {
+    fn new() -> Self {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        }
+        Self
+    }
+}
+
+impl Drop for ComGuard {
+    fn drop(&mut self) {
+        unsafe { CoUninitialize() }
+    }
+}
+
 fn setup_json_filter(dialog: &IFileDialog) -> Result<(), ystrokey_core::AppError> {
     let filter_name = HSTRING::from("JSON files (*.json)");
     let filter_pattern = HSTRING::from("*.json");
@@ -34,7 +51,7 @@ unsafe fn get_path_from_dialog(dialog: &IFileDialog) -> Result<Option<PathBuf>, 
 /// ファイル保存ダイアログで設定をエクスポート
 pub fn export_config(config: &AppConfig) -> Result<(), ystrokey_core::AppError> {
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        let _com = ComGuard::new();
 
         let dialog: IFileSaveDialog =
             CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL).map_err(win32_err)?;
@@ -54,7 +71,7 @@ pub fn export_config(config: &AppConfig) -> Result<(), ystrokey_core::AppError> 
 /// ファイル選択ダイアログで設定をインポート
 pub fn import_config() -> Result<Option<AppConfig>, ystrokey_core::AppError> {
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        let _com = ComGuard::new();
 
         let dialog: IFileOpenDialog =
             CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL).map_err(win32_err)?;

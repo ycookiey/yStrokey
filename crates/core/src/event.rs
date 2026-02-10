@@ -10,6 +10,14 @@ pub enum InputEvent {
     Ime(ImeEvent),
     Clipboard(ClipboardEvent),
     LockState(LockStateEvent),
+    /// DPI変更通知 (モニタ移動等)
+    DpiChanged {
+        dpi: u32,
+        /// suggested rect [left, top, right, bottom]
+        suggested_rect: [i32; 4],
+    },
+    /// 設定がインポート等で外部から変更された通知
+    ConfigChanged,
 }
 
 /// キーイベント

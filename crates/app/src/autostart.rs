@@ -31,7 +31,7 @@ pub fn set_autostart(enable: bool) -> Result<(), AppError> {
         if enable {
             let exe_path = std::env::current_exe()
                 .map_err(|e| AppError::Win32(e.to_string()))?;
-            let path_str = exe_path.to_string_lossy().to_string();
+            let path_str = format!("\"{}\"", exe_path.to_string_lossy());
             let path_wide = to_wide(&path_str);
             let bytes: &[u8] = std::slice::from_raw_parts(
                 path_wide.as_ptr() as *const u8,

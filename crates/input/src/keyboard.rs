@@ -3,6 +3,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use windows::Win32::Foundation::*;
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, VK_CAPITAL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
     VK_NUMLOCK, VK_RCONTROL, VK_RMENU,
@@ -158,7 +159,8 @@ pub fn run_hook_thread(tx: SyncSender<InputEvent>) {
     });
 
     unsafe {
-        let kb_hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0)
+        let hmod = GetModuleHandleW(None).ok().map(|h| HINSTANCE(h.0));
+        let kb_hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), hmod.unwrap_or_default(), 0)
             .expect("keyboard hook install failed");
 
         // LL hookはメッセージループが必須
