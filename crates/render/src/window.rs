@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::mem;
 
 use windows::core::w;
@@ -8,6 +7,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use ystrokey_core::config::{DisplayConfig, Position};
 use ystrokey_core::RenderError;
 
 pub struct OsdWindow {
@@ -21,7 +21,7 @@ pub struct OsdWindow {
 }
 
 impl OsdWindow {
-    pub fn create(width: i32, height: i32) -> Result<Self, RenderError> {
+    pub fn create(width: i32, height: i32, display_config: &DisplayConfig) -> Result<Self, RenderError> {
         unsafe {
             let instance = GetModuleHandleW(None)
                 .map_err(|e| RenderError::CreateFailed(e.to_string()))?;
@@ -36,7 +36,7 @@ impl OsdWindow {
             };
             RegisterClassExW(&wc);
             // Primary monitor work area
-            let (x, y) = get_primary_monitor_position(width, height);
+            let (x, y) = get_primary_monitor_position(width, height, display_config);
 
             let ex_style = WS_EX_LAYERED
                 | WS_EX_TOPMOST
@@ -220,11 +220,11 @@ impl OsdWindow {
     }
 
     /// Reposition OSD to the monitor of the target window.
-    /// 保存済み位置があればそれを使用し、なければデフォルト計算。
+    /// 保存済み位置があればそれを使用し、なければDisplayConfigの設定で計算。
     pub fn reposition_to_monitor(
         &self,
         hwnd_target: HWND,
-        monitor_positions: &HashMap<String, [i32; 2]>,
+        display_config: &DisplayConfig,
     ) {
         unsafe {
             let hmon = MonitorFromWindow(hwnd_target, MONITOR_DEFAULTTONEAREST);
@@ -239,16 +239,20 @@ impl OsdWindow {
                     .unwrap_or(name_slice.len());
                 let device_name = String::from_utf16_lossy(&name_slice[..len]);
 
-                if let Some(&[x, y]) = monitor_positions.get(&device_name) {
+                if let Some(&[x, y]) = display_config.monitor_positions.get(&device_name) {
                     // 保存済み位置を使用
                     self.set_position(x, y);
                 } else {
-                    // デフォルト位置
+                    // 設定ベースの位置計算
                     let work = mi.monitorInfo.rcWork;
-                    let mon_w = work.right - work.left;
-                    let mon_h = work.bottom - work.top;
-                    let x = work.left + (mon_w - self.width) / 2;
-                    let y = work.top + mon_h - self.height - 48;
+                    let (x, y) = compute_position(
+                        &display_config.position,
+                        &work,
+                        self.width,
+                        self.height,
+                        display_config.offset_x,
+                        display_config.offset_y,
+                    );
                     self.set_position(x, y);
                 }
             }
@@ -306,8 +310,32 @@ fn create_bitmapinfo(width: i32, height: i32) -> BITMAPINFO {
     }
 }
 
+/// Position enum + work area から OSD の座標を計算
+fn compute_position(
+    pos: &Position,
+    work: &RECT,
+    width: i32,
+    height: i32,
+    offset_x: i32,
+    offset_y: i32,
+) -> (i32, i32) {
+    let mon_w = work.right - work.left;
+    let mon_h = work.bottom - work.top;
+
+    let (base_x, base_y) = match pos {
+        Position::TopLeft => (work.left, work.top),
+        Position::TopCenter => (work.left + (mon_w - width) / 2, work.top),
+        Position::TopRight => (work.right - width, work.top),
+        Position::BottomLeft => (work.left, work.top + mon_h - height),
+        Position::BottomCenter => (work.left + (mon_w - width) / 2, work.top + mon_h - height),
+        Position::BottomRight => (work.right - width, work.top + mon_h - height),
+    };
+
+    (base_x + offset_x, base_y + offset_y)
+}
+
 /// Compute initial OSD position from primary monitor work area
-unsafe fn get_primary_monitor_position(width: i32, height: i32) -> (i32, i32) {
+unsafe fn get_primary_monitor_position(width: i32, height: i32, display_config: &DisplayConfig) -> (i32, i32) {
     let pt = POINT { x: 0, y: 0 };
     let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
     let mut mi = MONITORINFO {
@@ -315,12 +343,14 @@ unsafe fn get_primary_monitor_position(width: i32, height: i32) -> (i32, i32) {
         ..Default::default()
     };
     if GetMonitorInfoW(hmon, &mut mi).as_bool() {
-        let work = mi.rcWork;
-        let mon_w = work.right - work.left;
-        let mon_h = work.bottom - work.top;
-        let x = work.left + (mon_w - width) / 2;
-        let y = work.top + mon_h - height - 48;
-        (x, y)
+        compute_position(
+            &display_config.position,
+            &mi.rcWork,
+            width,
+            height,
+            display_config.offset_x,
+            display_config.offset_y,
+        )
     } else {
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let screen_h = GetSystemMetrics(SM_CYSCREEN);

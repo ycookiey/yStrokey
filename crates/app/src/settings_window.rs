@@ -1,5 +1,5 @@
+use std::cell::Cell;
 use std::path::Path;
-use std::sync::OnceLock;
 
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -7,30 +7,18 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use ystrokey_core::AppConfig;
 
-/// HWND のラッパー（Send + Sync を実装）
-/// 設定ウィンドウはメインスレッドのみで操作するため安全
-#[derive(Clone, Copy)]
-struct SendHwnd(HWND);
-unsafe impl Send for SendHwnd {}
-unsafe impl Sync for SendHwnd {}
-
-/// 設定ウィンドウ用グローバル状態
+/// 設定ウィンドウの状態（GWLP_USERDATA に格納、UIスレッド限定）
 struct SettingsState {
     config: AppConfig,
     config_path: std::path::PathBuf,
-    edit_font_size: SendHwnd,
-    edit_duration: SendHwnd,
-    edit_opacity: SendHwnd,
+    edit_font_size: HWND,
+    edit_duration: HWND,
+    edit_opacity: HWND,
 }
 
-// SettingsState には SendHwnd 経由で HWND が含まれる
-unsafe impl Send for SettingsState {}
-unsafe impl Sync for SettingsState {}
-
-static SETTINGS_STATE: OnceLock<std::sync::Mutex<Option<SettingsState>>> = OnceLock::new();
-
-fn get_state() -> &'static std::sync::Mutex<Option<SettingsState>> {
-    SETTINGS_STATE.get_or_init(|| std::sync::Mutex::new(None))
+// 設定ウィンドウが既に開いているかどうか（UIスレッド限定）
+thread_local! {
+    static SETTINGS_OPEN: Cell<bool> = const { Cell::new(false) };
 }
 
 const ID_BTN_SAVE: u16 = 100;
@@ -48,38 +36,41 @@ unsafe extern "system" fn settings_wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_COMMAND => {
-            let cmd_id = (wparam.0 & 0xFFFF) as u16;
-            match cmd_id {
-                ID_BTN_SAVE => {
-                    if let Ok(mut guard) = get_state().lock() {
-                        if let Some(ref mut state) = *guard {
-                            let font_size = get_edit_f32(state.edit_font_size.0)
-                                .unwrap_or(state.config.style.font_size);
-                            let duration = get_edit_u64(state.edit_duration.0)
-                                .unwrap_or(state.config.display.display_duration_ms);
-                            let opacity = get_edit_f32(state.edit_opacity.0)
-                                .unwrap_or(state.config.style.opacity)
-                                .clamp(0.0, 1.0);
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut SettingsState;
+            if !ptr.is_null() {
+                let state = &mut *ptr;
+                let cmd_id = (wparam.0 & 0xFFFF) as u16;
+                match cmd_id {
+                    ID_BTN_SAVE => {
+                        let font_size = get_edit_f32(state.edit_font_size)
+                            .unwrap_or(state.config.style.font_size);
+                        let duration = get_edit_u64(state.edit_duration)
+                            .unwrap_or(state.config.display.display_duration_ms);
+                        let opacity = get_edit_f32(state.edit_opacity)
+                            .unwrap_or(state.config.style.opacity)
+                            .clamp(0.0, 1.0);
 
-                            state.config.style.font_size = font_size;
-                            state.config.display.display_duration_ms = duration;
-                            state.config.style.opacity = opacity;
-                            let _ = state.config.save(&state.config_path);
-                        }
+                        state.config.style.font_size = font_size;
+                        state.config.display.display_duration_ms = duration;
+                        state.config.style.opacity = opacity;
+                        let _ = state.config.save(&state.config_path);
+                        let _ = DestroyWindow(hwnd);
                     }
-                    let _ = DestroyWindow(hwnd);
+                    ID_BTN_CANCEL => {
+                        let _ = DestroyWindow(hwnd);
+                    }
+                    _ => {}
                 }
-                ID_BTN_CANCEL => {
-                    let _ = DestroyWindow(hwnd);
-                }
-                _ => {}
             }
             LRESULT(0)
         }
         WM_DESTROY => {
-            if let Ok(mut guard) = get_state().lock() {
-                *guard = None;
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut SettingsState;
+            if !ptr.is_null() {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                drop(Box::from_raw(ptr));
             }
+            SETTINGS_OPEN.with(|c| c.set(false));
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -138,13 +129,11 @@ unsafe fn create_button(parent: HWND, text: &str, id: u16, x: i32, y: i32, w: i3
     );
 }
 
-/// 設定ウィンドウを開く
+/// 設定ウィンドウを開く（UIスレッドから呼ぶこと）
 pub fn open_settings_window(config: &AppConfig, config_path: &Path) {
     // 既に開いている場合は何もしない
-    if let Ok(guard) = get_state().lock() {
-        if guard.is_some() {
-            return;
-        }
+    if SETTINGS_OPEN.with(|c| c.get()) {
+        return;
     }
 
     unsafe {
@@ -190,15 +179,15 @@ pub fn open_settings_window(config: &AppConfig, config_path: &Path) {
         create_button(hwnd, "保存", ID_BTN_SAVE, 80, 140, 80, 30);
         create_button(hwnd, "キャンセル", ID_BTN_CANCEL, 180, 140, 80, 30);
 
-        if let Ok(mut guard) = get_state().lock() {
-            *guard = Some(SettingsState {
-                config: config.clone(),
-                config_path: config_path.to_path_buf(),
-                edit_font_size: SendHwnd(edit_font),
-                edit_duration: SendHwnd(edit_dur),
-                edit_opacity: SendHwnd(edit_opa),
-            });
-        }
+        let state = Box::new(SettingsState {
+            config: config.clone(),
+            config_path: config_path.to_path_buf(),
+            edit_font_size: edit_font,
+            edit_duration: edit_dur,
+            edit_opacity: edit_opa,
+        });
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
+        SETTINGS_OPEN.with(|c| c.set(true));
 
         let _ = ShowWindow(hwnd, SW_SHOW);
     }

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::config::{AppConfig, ShortcutDef};
@@ -7,30 +6,14 @@ use crate::key::KeyCode;
 
 /// アプリケーション全体の表示状態
 pub struct DisplayState {
-    /// 各キーの押下状態
-    key_states: HashMap<KeyCode, KeyHoldState>,
     /// 現在表示中のOSDアイテム
     items: Vec<DisplayItem>,
     /// 連打検出用
     repeat_tracker: RepeatTracker,
-    /// IME状態
-    ime_state: ImeState,
-    /// Lock状態
-    lock_state: LockState,
-    /// OSD有効/無効
-    enabled: bool,
     /// 設定
     config: AppConfig,
     /// 次のアイテムID
     next_id: u64,
-}
-
-/// 個々のキーの押下状態
-#[derive(Debug, Clone)]
-pub struct KeyHoldState {
-    pub pressed: bool,
-    pub down_since: Instant,
-    pub last_up: Option<Instant>,
 }
 
 /// 表示アイテム（OSD上の1つの表示要素）
@@ -39,7 +22,6 @@ pub struct DisplayItem {
     pub id: u64,
     pub kind: DisplayItemKind,
     pub created_at: Instant,
-    pub expires_at: Instant,
     /// 0.0（透明）〜 1.0（不透明）
     pub opacity: f32,
     /// フェーズ
@@ -131,70 +113,46 @@ impl RepeatTracker {
     }
 }
 
-/// IME状態
-#[derive(Debug, Clone, Default)]
-pub struct ImeState {
-    pub enabled: bool,
-    pub composition: Option<String>,
-}
-
-/// Lock状態
-#[derive(Debug, Clone, Default)]
-pub struct LockState {
-    pub caps_lock: bool,
-    pub num_lock: bool,
-    pub scroll_lock: bool,
-}
-
 impl DisplayState {
     pub fn new(config: &AppConfig) -> Self {
         let timeout = Duration::from_millis(config.behavior.repeat_timeout_ms);
         Self {
-            key_states: HashMap::new(),
             items: Vec::new(),
             repeat_tracker: RepeatTracker::new(timeout),
-            ime_state: ImeState::default(),
-            lock_state: LockState::default(),
-            enabled: true,
             config: config.clone(),
             next_id: 0,
         }
     }
 
     pub fn process_event(&mut self, event: InputEvent) {
-        if !self.enabled {
-            return;
-        }
-
         match event {
             InputEvent::Key(ke) => self.process_key_event(ke),
             InputEvent::Mouse(me) => self.process_mouse_event(me),
             InputEvent::Ime(ie) => self.process_ime_event(ie),
             InputEvent::Clipboard(ce) => self.process_clipboard_event(ce),
             InputEvent::LockState(ls) => self.process_lock_event(ls),
+            InputEvent::DpiChanged { .. } | InputEvent::ConfigChanged => {} // main loopで処理
         }
     }
 
     fn process_key_event(&mut self, ke: KeyEvent) {
-        // Key filter: skip ignored keys (case-insensitive)
-        let label = ke.key.label();
-        if self.config.behavior.ignored_keys.iter().any(|k| k.eq_ignore_ascii_case(label)) {
+        // Key filter: skip ignored keys (case-insensitive, always use full label)
+        let full_label = ke.key.label();
+        if self.config.behavior.ignored_keys.iter().any(|k| k.eq_ignore_ascii_case(full_label)) {
             return;
         }
 
         let now = ke.timestamp;
 
+        // 表示ラベル: distinguish_numpad に応じてテンキー区別を制御
+        let display_label = if self.config.behavior.distinguish_numpad {
+            ke.key.label()
+        } else {
+            ke.key.label_plain()
+        };
+
         match ke.action {
             KeyAction::Down => {
-                // キー状態更新
-                let state = self.key_states.entry(ke.key).or_insert(KeyHoldState {
-                    pressed: false,
-                    down_since: now,
-                    last_up: None,
-                });
-                state.pressed = true;
-                state.down_since = now;
-
                 // 修飾キー単体は表示しない
                 if ke.key.is_modifier() {
                     return;
@@ -214,20 +172,22 @@ impl DisplayState {
                     return;
                 }
 
-                // 連打カウント
-                let count = self.repeat_tracker.track(ke.key, ke.modifiers, now);
-
-                if count > 1 {
-                    self.update_repeat_count(ke.key, count);
+                // 連打カウント（show_repeat_count が有効な場合のみ追跡）
+                if self.config.behavior.show_repeat_count {
+                    let count = self.repeat_tracker.track(ke.key, ke.modifiers, now);
+                    if count > 1 {
+                        self.update_repeat_count(ke.key, count);
+                    } else {
+                        self.add_keystroke(display_label.to_string(), ke.modifiers, ke.action, now);
+                    }
                 } else {
-                    let label = ke.key.label().to_string();
-                    self.add_keystroke(label, ke.modifiers, ke.action, now);
+                    self.add_keystroke(display_label.to_string(), ke.modifiers, ke.action, now);
                 }
             }
             KeyAction::Up => {
-                if let Some(state) = self.key_states.get_mut(&ke.key) {
-                    state.pressed = false;
-                    state.last_up = Some(now);
+                // show_key_down_up: Up イベントも表示（修飾キー単体は除外）
+                if self.config.behavior.show_key_down_up && !ke.key.is_modifier() {
+                    self.add_keystroke(display_label.to_string(), ke.modifiers, KeyAction::Up, now);
                 }
             }
         }
@@ -269,11 +229,8 @@ impl DisplayState {
         }
 
         match ie.kind {
-            ImeEventKind::StateChanged { enabled } => {
-                self.ime_state.enabled = enabled;
-            }
+            ImeEventKind::StateChanged { .. } => {}
             ImeEventKind::CompositionUpdate { text } => {
-                self.ime_state.composition = Some(text.clone());
                 // 既存のIMEアイテムを更新、なければ追加
                 let updated = self.items.iter_mut().any(|item| {
                     if let DisplayItemKind::ImeComposition { text: ref mut t } = item.kind {
@@ -290,7 +247,6 @@ impl DisplayState {
                 }
             }
             ImeEventKind::CompositionEnd { .. } => {
-                self.ime_state.composition = None;
                 // IMEアイテムを除去
                 self.items
                     .retain(|item| !matches!(item.kind, DisplayItemKind::ImeComposition { .. }));
@@ -327,10 +283,6 @@ impl DisplayState {
         if !self.config.behavior.show_lock_indicators {
             return;
         }
-
-        self.lock_state.caps_lock = ls.caps_lock;
-        self.lock_state.num_lock = ls.num_lock;
-        self.lock_state.scroll_lock = ls.scroll_lock;
 
         self.add_item(
             DisplayItemKind::LockIndicator {
@@ -391,15 +343,10 @@ impl DisplayState {
     // --- private helpers ---
 
     fn add_item(&mut self, kind: DisplayItemKind, now: Instant) {
-        let display_dur =
-            Duration::from_millis(self.config.display.display_duration_ms);
-        let fade_dur = Duration::from_millis(self.config.display.fade_duration_ms);
-
         let item = DisplayItem {
             id: self.next_id,
             kind,
             created_at: now,
-            expires_at: now + display_dur + fade_dur,
             opacity: 1.0,
             phase: DisplayPhase::Active,
         };
@@ -464,25 +411,13 @@ impl DisplayState {
                         last_item.kind = DisplayItemKind::KeyStrokeGroup {
                             strokes: vec![first, new_entry],
                         };
-                        // タイマーリセット
-                        let display_dur =
-                            Duration::from_millis(self.config.display.display_duration_ms);
-                        let fade_dur =
-                            Duration::from_millis(self.config.display.fade_duration_ms);
                         last_item.created_at = now;
-                        last_item.expires_at = now + display_dur + fade_dur;
                         return;
                     }
                     DisplayItemKind::KeyStrokeGroup { strokes } => {
                         if strokes.len() < max_group {
                             strokes.push(new_entry);
-                            // タイマーリセット
-                            let display_dur =
-                                Duration::from_millis(self.config.display.display_duration_ms);
-                            let fade_dur =
-                                Duration::from_millis(self.config.display.fade_duration_ms);
                             last_item.created_at = now;
-                            last_item.expires_at = now + display_dur + fade_dur;
                             return;
                         }
                         // max_group_size に達したら新行へ
@@ -536,14 +471,8 @@ impl DisplayState {
                 _ => false,
             };
             if matched {
-                // タイマーリセット
-                let display_dur =
-                    Duration::from_millis(self.config.display.display_duration_ms);
-                let fade_dur =
-                    Duration::from_millis(self.config.display.fade_duration_ms);
                 let now = Instant::now();
                 item.created_at = now;
-                item.expires_at = now + display_dur + fade_dur;
                 item.opacity = 1.0;
                 item.phase = DisplayPhase::Active;
                 break;

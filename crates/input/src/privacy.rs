@@ -44,10 +44,10 @@ pub fn is_privacy_target(config: &PrivacyConfig) -> bool {
         return false;
     }
     match get_foreground_process_name() {
-        Some(name) => {
-            let name_lower = name.to_lowercase();
-            config.blocked_apps.iter().any(|app| app.to_lowercase() == name_lower)
-        }
+        Some(name) => config
+            .blocked_apps
+            .iter()
+            .any(|app| app.eq_ignore_ascii_case(&name)),
         None => false,
     }
 }

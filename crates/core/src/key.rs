@@ -212,6 +212,30 @@ impl KeyCode {
         }
     }
 
+    /// テンキー区別なしのラベルを返す（Numプレフィクスなし）
+    pub fn label_plain(&self) -> &'static str {
+        match *self {
+            Self::NUMPAD_0 => "0",
+            Self::NUMPAD_1 => "1",
+            Self::NUMPAD_2 => "2",
+            Self::NUMPAD_3 => "3",
+            Self::NUMPAD_4 => "4",
+            Self::NUMPAD_5 => "5",
+            Self::NUMPAD_6 => "6",
+            Self::NUMPAD_7 => "7",
+            Self::NUMPAD_8 => "8",
+            Self::NUMPAD_9 => "9",
+            Self::NUMPAD_MULTIPLY => "*",
+            Self::NUMPAD_ADD => "+",
+            Self::NUMPAD_SEPARATOR => "Sep",
+            Self::NUMPAD_SUBTRACT => "-",
+            Self::NUMPAD_DECIMAL => ".",
+            Self::NUMPAD_DIVIDE => "/",
+            Self::NUMPAD_ENTER => "Enter",
+            _ => self.label(),
+        }
+    }
+
     /// 修飾キーかどうか
     pub fn is_modifier(&self) -> bool {
         matches!(

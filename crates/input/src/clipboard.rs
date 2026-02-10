@@ -3,7 +3,7 @@ use windows::Win32::System::DataExchange::{
     AddClipboardFormatListener, CloseClipboard, GetClipboardData, IsClipboardFormatAvailable,
     OpenClipboard, RemoveClipboardFormatListener,
 };
-use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 
 /// クリップボード変更リスナー
@@ -38,14 +38,16 @@ impl ClipboardListener {
             let result = (|| -> Option<String> {
                 let handle = GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?;
                 let hglobal = HGLOBAL(handle.0);
+                let size = GlobalSize(hglobal);
+                let max_u16_len = if size > 0 { size / 2 } else { usize::MAX };
                 let ptr = GlobalLock(hglobal) as *const u16;
                 if ptr.is_null() {
                     return None;
                 }
 
-                // null終端までの長さを計算
+                // null終端までの長さを計算（GlobalSize上限付き）
                 let mut len = 0;
-                while *ptr.add(len) != 0 {
+                while len < max_u16_len && *ptr.add(len) != 0 {
                     len += 1;
                 }
 

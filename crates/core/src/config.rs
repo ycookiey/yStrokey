@@ -22,8 +22,6 @@ pub struct AppConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DisplayConfig {
-    /// 表示対象モニタ (0 = プライマリ)
-    pub monitor: u32,
     /// 表示位置
     pub position: Position,
     /// 基準位置からのオフセット (px)
@@ -138,10 +136,9 @@ impl Default for AppConfig {
 impl Default for DisplayConfig {
     fn default() -> Self {
         Self {
-            monitor: 0,
             position: Position::BottomCenter,
             offset_x: 0,
-            offset_y: -100,
+            offset_y: -48,
             monitor_positions: HashMap::new(),
             max_items: 5,
             display_duration_ms: 2000,
@@ -159,8 +156,8 @@ impl Default for StyleConfig {
             background_color: "#000000CC".into(),
             border_radius: 8.0,
             padding: 12.0,
-            shortcut_color: "#FFD700".into(),
-            key_down_color: "#4CAF50".into(),
+            shortcut_color: "#4CAF50".into(),
+            key_down_color: "#2196F3".into(),
             opacity: 0.95,
         }
     }
@@ -234,12 +231,13 @@ impl AppConfig {
             config.last_modified = std::fs::metadata(config_path)?.modified().ok();
             Ok(config)
         } else {
-            let config = Self::default();
+            let mut config = Self::default();
             let json = serde_json::to_string_pretty(&config)?;
             if let Some(parent) = config_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(config_path, json)?;
+            std::fs::write(config_path, &json)?;
+            config.last_modified = std::fs::metadata(config_path)?.modified().ok();
             Ok(config)
         }
     }
@@ -247,13 +245,15 @@ impl AppConfig {
     /// ファイルの更新日時を確認し、変更があれば再読み込み
     pub fn check_reload(&self, path: &Path) -> Option<AppConfig> {
         let modified = std::fs::metadata(path).ok()?.modified().ok()?;
-        if let Some(last) = self.last_modified {
-            if modified > last {
-                let content = std::fs::read_to_string(path).ok()?;
-                let mut config: AppConfig = serde_json::from_str(&content).ok()?;
-                config.last_modified = Some(modified);
-                return Some(config);
-            }
+        let should_reload = match self.last_modified {
+            Some(last) => modified > last,
+            None => true,
+        };
+        if should_reload {
+            let content = std::fs::read_to_string(path).ok()?;
+            let mut config: AppConfig = serde_json::from_str(&content).ok()?;
+            config.last_modified = Some(modified);
+            return Some(config);
         }
         None
     }

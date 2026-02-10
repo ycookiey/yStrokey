@@ -1,6 +1,6 @@
 # yStrokey
 
-Windows向けキー入力・マウス操作視覚化（OSD）ツール。
+Windows向けキー入力視覚化（OSD）ツール。
 
 ## インストール
 

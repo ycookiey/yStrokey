@@ -28,6 +28,7 @@ use tray::{
 const OSD_WIDTH: i32 = 600;
 const OSD_HEIGHT: i32 = 300;
 const IME_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const HOTKEY_TOGGLE_ID: i32 = 1;
 
 /// wnd_proc からイベント送信用のグローバルチャネル
 static EVENT_TX: OnceLock<SyncSender<InputEvent>> = OnceLock::new();
@@ -97,6 +98,9 @@ unsafe extern "system" fn app_wnd_proc(
                             if let Ok(mut cfg) = cfg_mutex.lock() {
                                 *cfg = new_cfg;
                             }
+                            if let Some(tx) = EVENT_TX.get() {
+                                let _ = tx.try_send(InputEvent::ConfigChanged);
+                            }
                         }
                     }
                 }
@@ -139,19 +143,24 @@ unsafe extern "system" fn app_wnd_proc(
             save_current_position(hwnd);
             LRESULT(0)
         }
+        WM_HOTKEY => {
+            if wparam.0 as i32 == HOTKEY_TOGGLE_ID {
+                let prev = OSD_ENABLED.load(Ordering::Relaxed);
+                OSD_ENABLED.store(!prev, Ordering::Relaxed);
+            }
+            LRESULT(0)
+        }
         WM_DPICHANGED => {
+            let new_dpi = (wparam.0 >> 16) as u32;
             let suggested = lparam.0 as *const RECT;
             if !suggested.is_null() {
                 let r = &*suggested;
-                let _ = SetWindowPos(
-                    hwnd,
-                    HWND::default(),
-                    r.left,
-                    r.top,
-                    r.right - r.left,
-                    r.bottom - r.top,
-                    SWP_NOACTIVATE | SWP_NOZORDER,
-                );
+                if let Some(tx) = EVENT_TX.get() {
+                    let _ = tx.try_send(InputEvent::DpiChanged {
+                        dpi: new_dpi,
+                        suggested_rect: [r.left, r.top, r.right, r.bottom],
+                    });
+                }
             }
             LRESULT(0)
         }
@@ -185,7 +194,7 @@ fn main() {
     let _ = CURRENT_CONFIG.set(Mutex::new(config.clone()));
 
     // OSD ウィンドウ作成
-    let window = OsdWindow::create(OSD_WIDTH, OSD_HEIGHT).expect("OSD window creation failed");
+    let mut window = OsdWindow::create(OSD_WIDTH, OSD_HEIGHT, &config.display).expect("OSD window creation failed");
 
     // ウィンドウプロシージャをアプリ用に差し替え
     unsafe {
@@ -196,7 +205,7 @@ fn main() {
     window.set_display_affinity(config.behavior.exclude_from_capture);
 
     // Direct2D レンダラー作成
-    let renderer =
+    let mut renderer =
         D2DRenderer::new(&config.style)
             .expect("D2D renderer creation failed");
 
@@ -219,6 +228,9 @@ fn main() {
         }
     };
 
+    // グローバルホットキー登録
+    register_toggle_hotkey(window.hwnd(), &config.hotkey.toggle);
+
     // システムトレイアイコン作成
     let _tray = tray::TrayIcon::new(window.hwnd()).expect("tray icon creation failed");
 
@@ -229,6 +241,7 @@ fn main() {
     let mut last_config_check = Instant::now();
     let config_check_interval = Duration::from_secs(1);
     let mut privacy_active = false;
+    let mut was_rendering = false;
 
     loop {
         // Win32 メッセージ処理
@@ -245,6 +258,33 @@ fn main() {
         // イベント受信（OSD無効時はイベント破棄）
         let enabled = OSD_ENABLED.load(Ordering::Relaxed);
         while let Ok(event) = rx.try_recv() {
+            match &event {
+                InputEvent::DpiChanged { dpi, suggested_rect } => {
+                    let rect = RECT {
+                        left: suggested_rect[0],
+                        top: suggested_rect[1],
+                        right: suggested_rect[2],
+                        bottom: suggested_rect[3],
+                    };
+                    window.update_for_dpi(*dpi, &rect);
+                    renderer.update_dpi(*dpi);
+                    continue;
+                }
+                InputEvent::ConfigChanged => {
+                    if let Some(cfg_mutex) = CURRENT_CONFIG.get() {
+                        if let Ok(new_cfg) = cfg_mutex.lock() {
+                            let new_config = new_cfg.clone();
+                            drop(new_cfg);
+                            state.update_config(&new_config);
+                            renderer.update_style(&new_config.style);
+                            window.set_display_affinity(new_config.behavior.exclude_from_capture);
+                            config = new_config;
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
+            }
             if enabled && !privacy_active {
                 state.process_event(event);
             }
@@ -258,15 +298,10 @@ fn main() {
                 poll_ime_state(&tx);
             }
             // Multi-monitor: reposition OSD to foreground window monitor
-            let positions = CURRENT_CONFIG
-                .get()
-                .and_then(|m| m.lock().ok())
-                .map(|cfg| cfg.display.monitor_positions.clone())
-                .unwrap_or_default();
             unsafe {
                 let fg = GetForegroundWindow();
                 if !fg.0.is_null() {
-                    window.reposition_to_monitor(fg, &positions);
+                    window.reposition_to_monitor(fg, &config.display);
                 }
             }
             last_ime_poll = now;
@@ -276,6 +311,7 @@ fn main() {
         if now.duration_since(last_config_check) >= config_check_interval {
             if let Some(new_config) = config.check_reload(&config_path) {
                 state.update_config(&new_config);
+                renderer.update_style(&new_config.style);
                 window.set_display_affinity(new_config.behavior.exclude_from_capture);
                 if let Some(cfg_mutex) = CURRENT_CONFIG.get() {
                     if let Ok(mut cfg) = cfg_mutex.lock() {
@@ -290,26 +326,34 @@ fn main() {
         // アニメーション更新
         state.tick(Instant::now());
 
-        // Ghost-mode: 不透明度計算 + インタラクティブ切替
-        let items = state.active_items();
-        let ghost_opacity = calculate_ghost_opacity(&window);
-        let interactive = ghost_opacity > 0.0 && is_cursor_in_rect(&window.get_rect());
-        GHOST_INTERACTIVE.store(interactive, Ordering::Relaxed);
-        window.set_interactive(interactive);
+        let has_items = !state.active_items().is_empty();
 
-        // 描画
-        let _ = renderer.render(
-            items,
-            &config.style,
-            window.mem_dc(),
-            window.width() as u32,
-            window.height() as u32,
-            ghost_opacity,
-        );
-        window.present(config.style.opacity);
+        if has_items || was_rendering {
+            // 描画が必要（アクティブ、またはクリア用の最終フレーム）
+            let items = state.active_items();
+            let ghost_opacity = calculate_ghost_opacity(&window);
+            let interactive = ghost_opacity > 0.0 && is_cursor_in_rect(&window.get_rect());
+            GHOST_INTERACTIVE.store(interactive, Ordering::Relaxed);
+            window.set_interactive(interactive);
 
-        // フレーム待機（~60fps）
-        std::thread::sleep(frame_duration);
+            let _ = renderer.render(
+                items,
+                &config.style,
+                window.mem_dc(),
+                window.width() as u32,
+                window.height() as u32,
+                ghost_opacity,
+            );
+            window.present(config.style.opacity);
+
+            was_rendering = has_items;
+            std::thread::sleep(frame_duration);
+        } else {
+            // アイドル: 描画をスキップし、メッセージまたはタイムアウト(50ms)で待機
+            unsafe {
+                MsgWaitForMultipleObjects(None, false, 50, QS_ALLINPUT);
+            }
+        }
     }
 }
 
@@ -394,4 +438,66 @@ fn save_current_position(hwnd: HWND) {
             }
         }
     }
+}
+
+/// ホットキー文字列（例: "Ctrl+Alt+F12"）をパースして RegisterHotKey で登録
+fn register_toggle_hotkey(hwnd: HWND, hotkey_str: &str) {
+    if hotkey_str.is_empty() {
+        return;
+    }
+
+    let Some((modifiers, vk)) = parse_hotkey(hotkey_str) else {
+        eprintln!("invalid hotkey: {}", hotkey_str);
+        return;
+    };
+
+    unsafe {
+        if RegisterHotKey(hwnd, HOTKEY_TOGGLE_ID, modifiers, vk).is_err() {
+            eprintln!("RegisterHotKey failed for: {}", hotkey_str);
+        }
+    }
+}
+
+/// ホットキー文字列をパースして (MOD_*, VKコード) に変換
+fn parse_hotkey(s: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
+    let mut modifiers = MOD_NOREPEAT;
+    let mut vk = None;
+
+    for part in s.split('+') {
+        match part.trim() {
+            "Ctrl" => modifiers |= MOD_CONTROL,
+            "Alt" => modifiers |= MOD_ALT,
+            "Shift" => modifiers |= MOD_SHIFT,
+            "Win" => modifiers |= MOD_WIN,
+            key => vk = Some(key_name_to_vk(key)?),
+        }
+    }
+
+    Some((modifiers, vk?))
+}
+
+/// キー名から Win32 仮想キーコードへの変換
+fn key_name_to_vk(name: &str) -> Option<u32> {
+    let vk = match name {
+        "F1" => 0x70, "F2" => 0x71, "F3" => 0x72, "F4" => 0x73,
+        "F5" => 0x74, "F6" => 0x75, "F7" => 0x76, "F8" => 0x77,
+        "F9" => 0x78, "F10" => 0x79, "F11" => 0x7A, "F12" => 0x7B,
+        "0" => 0x30, "1" => 0x31, "2" => 0x32, "3" => 0x33,
+        "4" => 0x34, "5" => 0x35, "6" => 0x36, "7" => 0x37,
+        "8" => 0x38, "9" => 0x39,
+        "A" => 0x41, "B" => 0x42, "C" => 0x43, "D" => 0x44,
+        "E" => 0x45, "F" => 0x46, "G" => 0x47, "H" => 0x48,
+        "I" => 0x49, "J" => 0x4A, "K" => 0x4B, "L" => 0x4C,
+        "M" => 0x4D, "N" => 0x4E, "O" => 0x4F, "P" => 0x50,
+        "Q" => 0x51, "R" => 0x52, "S" => 0x53, "T" => 0x54,
+        "U" => 0x55, "V" => 0x56, "W" => 0x57, "X" => 0x58,
+        "Y" => 0x59, "Z" => 0x5A,
+        "Space" => 0x20, "Enter" => 0x0D, "Tab" => 0x09,
+        "Esc" => 0x1B, "BS" => 0x08, "Del" => 0x2E, "Ins" => 0x2D,
+        "Home" => 0x24, "End" => 0x23, "PgUp" => 0x21, "PgDn" => 0x22,
+        "Left" => 0x25, "Up" => 0x26, "Right" => 0x27, "Down" => 0x28,
+        "Pause" => 0x13, "PrtSc" => 0x2C,
+        _ => return None,
+    };
+    Some(vk)
 }
