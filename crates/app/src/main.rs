@@ -554,13 +554,26 @@ fn load_config_with_recovery(config_path: &Path) -> AppConfig {
             }
 
             eprintln!("invalid config recovered with defaults: {}", err);
-            AppConfig::create_default(config_path).unwrap_or_else(|create_err| {
-                fatal_error(&format!(
-                    "Failed to recover invalid config (original: {err}, recover: {create_err})"
-                ))
-            })
+            match AppConfig::create_default(config_path) {
+                Ok(cfg) => cfg,
+                Err(create_err) => {
+                    eprintln!(
+                        "failed to persist recovered defaults: {}; using in-memory defaults",
+                        create_err
+                    );
+                    default_runtime_config(config_path)
+                }
+            }
         }
     }
+}
+
+fn default_runtime_config(config_path: &Path) -> AppConfig {
+    let mut cfg = AppConfig::default();
+    cfg.last_modified = std::fs::metadata(config_path)
+        .and_then(|m| m.modified())
+        .ok();
+    cfg
 }
 
 fn backup_invalid_config(config_path: &Path) -> Result<PathBuf, std::io::Error> {

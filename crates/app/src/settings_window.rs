@@ -9,8 +9,8 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use ystrokey_core::{
-    AppConfig, DiagnosticsLevel, FadeOutCurve, GhostModifier, InputEvent, MenuLanguage, Position,
-    ShortcutDef,
+    AppConfig, DiagnosticsLevel, FadeOutCurve, GhostModifier, InputEvent, KeyTransitionMode,
+    MenuLanguage, Position, ShortcutDef,
 };
 
 struct SettingsState {
@@ -84,7 +84,7 @@ const ID_STYLE_SHORTCUT_COLOR: u16 = 1206;
 const ID_STYLE_KEY_DOWN_COLOR: u16 = 1207;
 const ID_STYLE_OPACITY: u16 = 1208;
 
-const ID_BEHAVIOR_SHOW_KEY_DOWN_UP: u16 = 1300;
+const ID_BEHAVIOR_KEY_TRANSITION_MODE: u16 = 1300;
 const ID_BEHAVIOR_SHOW_REPEAT_COUNT: u16 = 1301;
 const ID_BEHAVIOR_DISTINGUISH_NUMPAD: u16 = 1302;
 const ID_BEHAVIOR_SHOW_IME: u16 = 1303;
@@ -298,7 +298,15 @@ unsafe fn rebuild_category(hwnd: HWND, state: &mut SettingsState) {
             add_edit_row(hwnd, state, "Opacity (0-1)", ID_STYLE_OPACITY, &cfg.style.opacity.to_string(), &mut y);
         }
         Category::Input => {
-            add_check_row(hwnd, state, "Show key down/up", ID_BEHAVIOR_SHOW_KEY_DOWN_UP, cfg.behavior.show_key_down_up, &mut y);
+            add_combo_row(
+                hwnd,
+                state,
+                "Key transition display",
+                ID_BEHAVIOR_KEY_TRANSITION_MODE,
+                &["single-cell", "split-cells"],
+                key_transition_mode_index(cfg.behavior.key_transition_mode),
+                &mut y,
+            );
             add_check_row(hwnd, state, "Show repeat count", ID_BEHAVIOR_SHOW_REPEAT_COUNT, cfg.behavior.show_repeat_count, &mut y);
             add_check_row(hwnd, state, "Distinguish numpad", ID_BEHAVIOR_DISTINGUISH_NUMPAD, cfg.behavior.distinguish_numpad, &mut y);
             add_check_row(hwnd, state, "Show IME composition", ID_BEHAVIOR_SHOW_IME, cfg.behavior.show_ime_composition, &mut y);
@@ -685,7 +693,13 @@ unsafe fn apply_control_to_config(parent: HWND, id: u16, cfg: &mut AppConfig) ->
         ID_STYLE_KEY_DOWN_COLOR => cfg.style.key_down_color = get_edit_string(parent, id),
         ID_STYLE_OPACITY => cfg.style.opacity = get_edit_f32(parent, id)?,
 
-        ID_BEHAVIOR_SHOW_KEY_DOWN_UP => cfg.behavior.show_key_down_up = get_checkbox(parent, id),
+        ID_BEHAVIOR_KEY_TRANSITION_MODE => {
+            cfg.behavior.key_transition_mode = match get_combo_index(parent, id)? {
+                0 => KeyTransitionMode::SingleCell,
+                1 => KeyTransitionMode::SplitCells,
+                _ => return Err("invalid behavior.key_transition_mode".into()),
+            }
+        }
         ID_BEHAVIOR_SHOW_REPEAT_COUNT => cfg.behavior.show_repeat_count = get_checkbox(parent, id),
         ID_BEHAVIOR_DISTINGUISH_NUMPAD => cfg.behavior.distinguish_numpad = get_checkbox(parent, id),
         ID_BEHAVIOR_SHOW_IME => cfg.behavior.show_ime_composition = get_checkbox(parent, id),
@@ -821,6 +835,13 @@ fn ghost_modifier_index(m: GhostModifier) -> i32 {
         GhostModifier::Ctrl => 0,
         GhostModifier::Alt => 1,
         GhostModifier::Shift => 2,
+    }
+}
+
+fn key_transition_mode_index(mode: KeyTransitionMode) -> i32 {
+    match mode {
+        KeyTransitionMode::SingleCell => 0,
+        KeyTransitionMode::SplitCells => 1,
     }
 }
 

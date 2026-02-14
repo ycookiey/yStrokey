@@ -1,6 +1,7 @@
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use crate::config::{AppConfig, FadeOutCurve, ShortcutDef};
+use crate::config::{AppConfig, FadeOutCurve, KeyTransitionMode, ShortcutDef};
 use crate::event::*;
 use crate::key::KeyCode;
 
@@ -14,6 +15,8 @@ pub struct DisplayState {
     config: AppConfig,
     /// 次のアイテムID
     next_id: u64,
+    /// 単一セルモードでのDown/Up対応付け
+    active_presses: HashMap<PressKey, PressTarget>,
 }
 
 /// 表示アイテム（OSD上の1つの表示要素）
@@ -86,6 +89,43 @@ struct RepeatTracker {
     timeout: Duration,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PressKey {
+    scan_code: u32,
+    is_numpad: bool,
+}
+
+impl PressKey {
+    fn from_key_event(ke: &KeyEvent) -> Self {
+        Self {
+            scan_code: ke.scan_code,
+            is_numpad: ke.is_numpad,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PressTarget {
+    item_id: u64,
+    group_index: Option<usize>,
+}
+
+impl PressTarget {
+    fn item(item_id: u64) -> Self {
+        Self {
+            item_id,
+            group_index: None,
+        }
+    }
+
+    fn group(item_id: u64, group_index: usize) -> Self {
+        Self {
+            item_id,
+            group_index: Some(group_index),
+        }
+    }
+}
+
 impl RepeatTracker {
     fn new(timeout: Duration) -> Self {
         Self {
@@ -121,6 +161,7 @@ impl DisplayState {
             repeat_tracker: RepeatTracker::new(timeout),
             config: config.clone(),
             next_id: 0,
+            active_presses: HashMap::new(),
         }
     }
 
@@ -162,32 +203,72 @@ impl DisplayState {
                 if let Some(shortcut) = self.match_shortcut(&ke) {
                     let keys_label = shortcut.keys.clone();
                     let action_label = shortcut.label.clone();
-                    self.add_item(
+                    let _ = self.add_item(
                         DisplayItemKind::Shortcut {
                             keys_label,
                             action_label,
                         },
                         now,
                     );
+                    self.active_presses.remove(&PressKey::from_key_event(&ke));
                     return;
                 }
 
-                // 連打カウント（show_repeat_count が有効な場合のみ追跡）
-                if self.config.behavior.show_repeat_count {
+                let target = if self.config.behavior.show_repeat_count {
                     let count = self.repeat_tracker.track(ke.key, ke.modifiers, now);
                     if count > 1 {
-                        self.update_repeat_count(ke.key, count);
+                        let force_down =
+                            self.config.behavior.key_transition_mode == KeyTransitionMode::SingleCell;
+                        self.update_repeat_count(count, now, force_down)
+                            .unwrap_or_else(|| {
+                                self.add_keystroke(
+                                    display_label.to_string(),
+                                    ke.modifiers,
+                                    KeyAction::Down,
+                                    now,
+                                )
+                            })
                     } else {
-                        self.add_keystroke(display_label.to_string(), ke.modifiers, ke.action, now);
+                        self.add_keystroke(
+                            display_label.to_string(),
+                            ke.modifiers,
+                            KeyAction::Down,
+                            now,
+                        )
                     }
                 } else {
-                    self.add_keystroke(display_label.to_string(), ke.modifiers, ke.action, now);
+                    self.add_keystroke(
+                        display_label.to_string(),
+                        ke.modifiers,
+                        KeyAction::Down,
+                        now,
+                    )
+                };
+
+                // 連打カウント（show_repeat_count が有効な場合のみ追跡）
+                if self.config.behavior.key_transition_mode == KeyTransitionMode::SingleCell {
+                    self.active_presses
+                        .insert(PressKey::from_key_event(&ke), target);
                 }
             }
             KeyAction::Up => {
-                // show_key_down_up: Up イベントも表示（修飾キー単体は除外）
-                if self.config.behavior.show_key_down_up && !ke.key.is_modifier() {
-                    self.add_keystroke(display_label.to_string(), ke.modifiers, KeyAction::Up, now);
+                if ke.key.is_modifier() {
+                    return;
+                }
+
+                match self.config.behavior.key_transition_mode {
+                    KeyTransitionMode::SingleCell => {
+                        self.apply_key_up_to_existing(&ke, now);
+                    }
+                    KeyTransitionMode::SplitCells => {
+                        self.active_presses.remove(&PressKey::from_key_event(&ke));
+                        let _ = self.add_keystroke(
+                            display_label.to_string(),
+                            ke.modifiers,
+                            KeyAction::Up,
+                            now,
+                        );
+                    }
                 }
             }
         }
@@ -212,7 +293,7 @@ impl DisplayState {
                 }
             }
         };
-        self.add_item(
+        let _ = self.add_item(
             DisplayItemKind::KeyStroke {
                 label: action_label.to_string(),
                 modifiers: Modifiers::default(),
@@ -243,13 +324,14 @@ impl DisplayState {
                     }
                 });
                 if !updated {
-                    self.add_item(DisplayItemKind::ImeComposition { text }, ie.timestamp);
+                    let _ = self.add_item(DisplayItemKind::ImeComposition { text }, ie.timestamp);
                 }
             }
             ImeEventKind::CompositionEnd { .. } => {
                 // IMEアイテムを除去
                 self.items
                     .retain(|item| !matches!(item.kind, DisplayItemKind::ImeComposition { .. }));
+                self.prune_active_press_targets();
             }
         }
     }
@@ -276,7 +358,7 @@ impl DisplayState {
             ClipboardContent::Other => "[Clipboard]".to_string(),
         };
 
-        self.add_item(DisplayItemKind::ClipboardPreview { text }, ce.timestamp);
+        let _ = self.add_item(DisplayItemKind::ClipboardPreview { text }, ce.timestamp);
     }
 
     fn process_lock_event(&mut self, ls: LockStateEvent) {
@@ -284,7 +366,7 @@ impl DisplayState {
             return;
         }
 
-        self.add_item(
+        let _ = self.add_item(
             DisplayItemKind::LockIndicator {
                 caps: ls.caps_lock,
                 num: ls.num_lock,
@@ -328,6 +410,7 @@ impl DisplayState {
         }
 
         self.items.retain(|item| item.phase != DisplayPhase::Expired);
+        self.prune_active_press_targets();
     }
 
     pub fn active_items(&self) -> &[DisplayItem] {
@@ -337,6 +420,7 @@ impl DisplayState {
     /// 全アイテムをクリア（privacy遷移時等）
     pub fn clear(&mut self) {
         self.items.clear();
+        self.active_presses.clear();
     }
 
     pub fn has_animations(&self) -> bool {
@@ -347,15 +431,20 @@ impl DisplayState {
 
     /// 設定を更新（ホットリロード用）
     pub fn update_config(&mut self, config: &AppConfig) {
+        if self.config.behavior.key_transition_mode != config.behavior.key_transition_mode {
+            self.active_presses.clear();
+        }
         self.config = config.clone();
         self.repeat_tracker.timeout = Duration::from_millis(config.behavior.repeat_timeout_ms);
+        self.prune_active_press_targets();
     }
 
     // --- private helpers ---
 
-    fn add_item(&mut self, kind: DisplayItemKind, now: Instant) {
+    fn add_item(&mut self, kind: DisplayItemKind, now: Instant) -> u64 {
+        let item_id = self.next_id;
         let item = DisplayItem {
-            id: self.next_id,
+            id: item_id,
             kind,
             created_at: now,
             opacity: 1.0,
@@ -368,6 +457,9 @@ impl DisplayState {
         while self.items.len() > self.config.display.max_items {
             self.items.remove(0);
         }
+
+        self.prune_active_press_targets();
+        item_id
     }
 
     fn add_keystroke(
@@ -376,10 +468,10 @@ impl DisplayState {
         modifiers: Modifiers,
         action: KeyAction,
         now: Instant,
-    ) {
+    ) -> PressTarget {
         let group_timeout_ms = self.config.behavior.group_timeout_ms;
         if group_timeout_ms == 0 {
-            self.add_item(
+            let item_id = self.add_item(
                 DisplayItemKind::KeyStroke {
                     label,
                     modifiers,
@@ -388,7 +480,7 @@ impl DisplayState {
                 },
                 now,
             );
-            return;
+            return PressTarget::item(item_id);
         }
 
         let group_timeout = Duration::from_millis(group_timeout_ms);
@@ -399,6 +491,8 @@ impl DisplayState {
             action,
             repeat_count: 1,
         };
+        let mut grouped_target = None;
+        let mut remap_item_id = None;
 
         // 最終アイテムがActiveかつタイムアウト内ならグループ化
         if let Some(last_item) = self.items.last_mut() {
@@ -423,13 +517,16 @@ impl DisplayState {
                             strokes: vec![first, new_entry],
                         };
                         last_item.created_at = now;
-                        return;
+                        let item_id = last_item.id;
+                        remap_item_id = Some(item_id);
+                        grouped_target = Some(PressTarget::group(item_id, 1));
                     }
                     DisplayItemKind::KeyStrokeGroup { strokes } => {
                         if strokes.len() < max_group {
                             strokes.push(new_entry);
                             last_item.created_at = now;
-                            return;
+                            grouped_target =
+                                Some(PressTarget::group(last_item.id, strokes.len() - 1));
                         }
                         // max_group_size に達したら新行へ
                     }
@@ -438,8 +535,15 @@ impl DisplayState {
             }
         }
 
+        if let Some(item_id) = remap_item_id {
+            self.remap_item_target_to_group_first(item_id);
+        }
+        if let Some(target) = grouped_target {
+            return target;
+        }
+
         // グループ化できない場合は通常の新行
-        self.add_item(
+        let item_id = self.add_item(
             DisplayItemKind::KeyStroke {
                 label,
                 modifiers,
@@ -448,6 +552,7 @@ impl DisplayState {
             },
             now,
         );
+        PressTarget::item(item_id)
     }
 
     fn match_shortcut(&self, ke: &KeyEvent) -> Option<&ShortcutDef> {
@@ -460,35 +565,107 @@ impl DisplayState {
         })
     }
 
-    fn update_repeat_count(&mut self, _key: KeyCode, count: u32) {
+    fn update_repeat_count(
+        &mut self,
+        count: u32,
+        now: Instant,
+        force_down_state: bool,
+    ) -> Option<PressTarget> {
         // 最新のKeyStroke/KeyStrokeGroupアイテムの連打カウントを更新
         for item in self.items.iter_mut().rev() {
             let matched = match &mut item.kind {
                 DisplayItemKind::KeyStroke {
+                    action: ref mut a,
                     repeat_count: ref mut rc,
                     ..
                 } => {
-                    *rc = count;
-                    true
+                    if *a == KeyAction::Down || force_down_state {
+                        if force_down_state {
+                            *a = KeyAction::Down;
+                        }
+                        *rc = count;
+                        Some(PressTarget::item(item.id))
+                    } else {
+                        None
+                    }
                 }
                 DisplayItemKind::KeyStrokeGroup { strokes } => {
                     if let Some(last) = strokes.last_mut() {
-                        last.repeat_count = count;
+                        if last.action == KeyAction::Down || force_down_state {
+                            if force_down_state {
+                                last.action = KeyAction::Down;
+                            }
+                            last.repeat_count = count;
+                            Some(PressTarget::group(item.id, strokes.len() - 1))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(target) = matched {
+                Self::refresh_item(item, now);
+                return Some(target);
+            }
+        }
+
+        None
+    }
+
+    fn apply_key_up_to_existing(&mut self, ke: &KeyEvent, now: Instant) {
+        let Some(target) = self.active_presses.remove(&PressKey::from_key_event(ke)) else {
+            return;
+        };
+
+        let Some(item) = self.items.iter_mut().find(|item| item.id == target.item_id) else {
+            return;
+        };
+
+        let updated = match &mut item.kind {
+            DisplayItemKind::KeyStroke { action, .. } => {
+                *action = KeyAction::Up;
+                true
+            }
+            DisplayItemKind::KeyStrokeGroup { strokes } => match target.group_index {
+                Some(idx) => {
+                    if let Some(stroke) = strokes.get_mut(idx) {
+                        stroke.action = KeyAction::Up;
                         true
                     } else {
                         false
                     }
                 }
-                _ => false,
-            };
-            if matched {
-                let now = Instant::now();
-                item.created_at = now;
-                item.opacity = 1.0;
-                item.phase = DisplayPhase::Active;
-                break;
+                None => false,
+            },
+            _ => false,
+        };
+
+        if updated {
+            Self::refresh_item(item, now);
+        }
+    }
+
+    fn remap_item_target_to_group_first(&mut self, item_id: u64) {
+        for target in self.active_presses.values_mut() {
+            if target.item_id == item_id && target.group_index.is_none() {
+                target.group_index = Some(0);
             }
         }
+    }
+
+    fn prune_active_press_targets(&mut self) {
+        let live_ids: HashSet<u64> = self.items.iter().map(|item| item.id).collect();
+        self.active_presses
+            .retain(|_, target| live_ids.contains(&target.item_id));
+    }
+
+    fn refresh_item(item: &mut DisplayItem, now: Instant) {
+        item.created_at = now;
+        item.opacity = 1.0;
+        item.phase = DisplayPhase::Active;
     }
 }
 

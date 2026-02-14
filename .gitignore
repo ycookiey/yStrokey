@@ -19,3 +19,5 @@ nul
 # Local temp build artifacts
 .tmp_build_check/
 /target2*/
+_perm_test.txt
+t2/
