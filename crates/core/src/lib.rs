@@ -4,7 +4,11 @@ pub mod event;
 pub mod key;
 pub mod state;
 
-pub use config::{AppConfig, BehaviorConfig, DisplayConfig, Position, StyleConfig};
+pub use config::{
+    AnimationConfig, AppConfig, BehaviorConfig, DiagnosticsConfig, DiagnosticsLevel, DisplayConfig,
+    FadeOutCurve, GhostModifier, HotkeyConfig, MenuLanguage, PerformanceConfig, Position,
+    PrivacyConfig, SCHEMA_VERSION, ShortcutDef, StartupConfig, StyleConfig, TrayConfig,
+};
 pub use error::{AppError, ConfigError, HookError, RenderError};
 pub use event::{
     ClipboardContent, ClipboardEvent, ImeEvent, ImeEventKind, InputEvent, KeyAction, KeyEvent,

@@ -1,46 +1,35 @@
 mod autostart;
+mod logger;
 mod settings_io;
 mod settings_window;
 mod tray;
 
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use windows::core::HSTRING;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use windows::core::HSTRING;
-
-use ystrokey_core::{AppConfig, ClipboardContent, ClipboardEvent, DisplayState, InputEvent};
+use ystrokey_core::{
+    AppConfig, ClipboardContent, ClipboardEvent, ConfigError, DiagnosticsLevel, DisplayState,
+    GhostModifier, InputEvent, MenuLanguage,
+};
 use ystrokey_input::{install_keyboard_hook, is_privacy_target, poll_ime_state, ClipboardListener};
 use ystrokey_render::{get_monitor_device_name, D2DRenderer, OsdWindow};
-
-/// 致命的エラー時にメッセージボックスを表示して終了
-fn fatal_error(msg: &str) -> ! {
-    eprintln!("FATAL: {msg}");
-    unsafe {
-        let text = HSTRING::from(msg);
-        let caption = HSTRING::from("yStrokey Error");
-        MessageBoxW(None, &text, &caption, MB_OK | MB_ICONERROR);
-    }
-    std::process::exit(1);
-}
 
 use tray::{
     show_context_menu, ID_TRAY_AUTOSTART, ID_TRAY_EXIT, ID_TRAY_EXPORT, ID_TRAY_IMPORT,
     ID_TRAY_SETTINGS, ID_TRAY_TOGGLE, WM_TRAYICON,
 };
 
-const OSD_WIDTH: i32 = 600;
-const OSD_HEIGHT: i32 = 300;
-const IME_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const HOTKEY_TOGGLE_ID: i32 = 1;
 
 /// wnd_proc からイベント送信用のグローバルチャネル
@@ -66,6 +55,29 @@ thread_local! {
 /// WM_CLIPBOARDUPDATE (Windows Vista+)
 const WM_CLIPBOARD_UPDATE: u32 = 0x031D;
 
+enum ApplyReason {
+    Startup,
+    HotReload,
+    UiEdit,
+}
+
+struct RuntimeIntervals {
+    frame_duration: Duration,
+    ime_poll_interval: Duration,
+    config_reload_interval: Duration,
+}
+
+/// 致命的エラー時にメッセージボックスを表示して終了
+fn fatal_error(msg: &str) -> ! {
+    logger::log(DiagnosticsLevel::Error, msg);
+    unsafe {
+        let text = HSTRING::from(msg);
+        let caption = HSTRING::from("yStrokey Error");
+        MessageBoxW(None, &text, &caption, MB_OK | MB_ICONERROR);
+    }
+    std::process::exit(1);
+}
+
 unsafe extern "system" fn app_wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -76,7 +88,13 @@ unsafe extern "system" fn app_wnd_proc(
         m if m == WM_TRAYICON => {
             let mouse_msg = lparam.0 as u32;
             if mouse_msg == WM_RBUTTONUP {
-                show_context_menu(hwnd);
+                let (menu_lang, osd_enabled) = current_tray_status();
+                show_context_menu(
+                    hwnd,
+                    menu_lang,
+                    osd_enabled,
+                    autostart::is_autostart_enabled(),
+                );
             }
             LRESULT(0)
         }
@@ -88,13 +106,31 @@ unsafe extern "system" fn app_wnd_proc(
                     OSD_ENABLED.store(!prev, Ordering::Relaxed);
                 }
                 ID_TRAY_AUTOSTART => {
-                    let currently = autostart::is_autostart_enabled();
-                    let _ = autostart::set_autostart(!currently);
+                    if let Some(cfg_mutex) = CURRENT_CONFIG.get() {
+                        if let Ok(mut cfg) = cfg_mutex.lock() {
+                            let next = !cfg.startup.autostart_enabled;
+                            if autostart::set_autostart(next).is_ok() {
+                                cfg.startup.autostart_enabled = next;
+                                if let Some(path) = CONFIG_PATH.get() {
+                                    let _ = cfg.save_atomic(path);
+                                }
+                                if let Some(tx) = EVENT_TX.get() {
+                                    let _ = tx.try_send(InputEvent::ConfigChanged);
+                                }
+                            } else {
+                                logger::log(
+                                    DiagnosticsLevel::Warn,
+                                    "Failed to toggle auto start from tray",
+                                );
+                            }
+                        }
+                    }
                 }
                 ID_TRAY_SETTINGS => {
                     if let (Some(path), Some(cfg_mutex)) = (CONFIG_PATH.get(), CURRENT_CONFIG.get()) {
                         if let Ok(cfg) = cfg_mutex.lock() {
-                            settings_window::open_settings_window(&cfg, path);
+                            let notify_tx = EVENT_TX.get().cloned();
+                            settings_window::open_settings_window(&cfg, path, notify_tx);
                         }
                     }
                 }
@@ -102,13 +138,27 @@ unsafe extern "system" fn app_wnd_proc(
                     if let Some(cfg_mutex) = CURRENT_CONFIG.get() {
                         let cfg_clone = cfg_mutex.lock().ok().map(|c| c.clone());
                         if let Some(cfg) = cfg_clone {
-                            let _ = settings_io::export_config(&cfg);
+                            if let Err(e) = settings_io::export_config(&cfg) {
+                                logger::log(
+                                    DiagnosticsLevel::Warn,
+                                    &format!("Config export failed: {e}"),
+                                );
+                            }
                         }
                     }
                 }
                 ID_TRAY_IMPORT => {
                     if let Some(cfg_mutex) = CURRENT_CONFIG.get() {
                         if let Ok(Some(new_cfg)) = settings_io::import_config() {
+                            if let Some(path) = CONFIG_PATH.get() {
+                                if let Err(e) = new_cfg.save_atomic(path) {
+                                    logger::log(
+                                        DiagnosticsLevel::Error,
+                                        &format!("Failed to persist imported config: {e}"),
+                                    );
+                                    return LRESULT(0);
+                                }
+                            }
                             if let Ok(mut cfg) = cfg_mutex.lock() {
                                 *cfg = new_cfg;
                             }
@@ -119,6 +169,17 @@ unsafe extern "system" fn app_wnd_proc(
                     }
                 }
                 ID_TRAY_EXIT => {
+                    if should_confirm_exit() {
+                        let yes = MessageBoxW(
+                            None,
+                            &HSTRING::from(exit_confirm_text()),
+                            &HSTRING::from("yStrokey"),
+                            MB_ICONQUESTION | MB_YESNO,
+                        );
+                        if yes != IDYES {
+                            return LRESULT(0);
+                        }
+                    }
                     PostQuitMessage(0);
                 }
                 _ => {}
@@ -186,83 +247,115 @@ unsafe extern "system" fn app_wnd_proc(
     }
 }
 
+fn current_tray_status() -> (MenuLanguage, bool) {
+    let menu_lang = CURRENT_CONFIG
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|cfg| cfg.tray.menu_language)
+        .unwrap_or(MenuLanguage::Ja);
+    let osd_enabled = OSD_ENABLED.load(Ordering::Relaxed);
+    (menu_lang, osd_enabled)
+}
+
+fn should_confirm_exit() -> bool {
+    CURRENT_CONFIG
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|cfg| cfg.tray.confirm_on_exit)
+        .unwrap_or(false)
+}
+
+fn exit_confirm_text() -> &'static str {
+    let lang = CURRENT_CONFIG
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|cfg| cfg.tray.menu_language)
+        .unwrap_or(MenuLanguage::En);
+
+    match lang {
+        MenuLanguage::Ja => "yStrokey を終了しますか？",
+        MenuLanguage::En => "Exit yStrokey?",
+    }
+}
+
 fn main() {
-    // DPI Awareness 設定
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
 
-    // 設定ファイル読み込み（exe隣の config.json）
     let config_path = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("config.json")))
-        .unwrap_or_else(|| std::path::PathBuf::from("config.json"));
+        .unwrap_or_else(|| PathBuf::from("config.json"));
 
-    let mut config = AppConfig::load_or_create(&config_path).unwrap_or_else(|e| {
-        eprintln!("config load failed, using defaults: {:?}", e);
-        AppConfig::default()
-    });
+    let base_dir = config_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
 
-    // グローバル状態にセット（wnd_proc からアクセス用）
+    let mut config = load_config_with_recovery(&config_path);
+
+    logger::init(&base_dir, &config.diagnostics);
+    logger::log(DiagnosticsLevel::Info, "Application startup");
+
     let _ = CONFIG_PATH.set(config_path.clone());
     let _ = CURRENT_CONFIG.set(Mutex::new(config.clone()));
 
-    // OSD ウィンドウ作成
-    let mut window = OsdWindow::create(OSD_WIDTH, OSD_HEIGHT, &config.display)
-        .unwrap_or_else(|e| fatal_error(&format!("OSD window creation failed: {e}")));
+    let mut window = OsdWindow::create(
+        config.performance.osd_width,
+        config.performance.osd_height,
+        &config.display,
+    )
+    .unwrap_or_else(|e| fatal_error(&format!("OSD window creation failed: {e}")));
 
-    // ウィンドウプロシージャをアプリ用に差し替え
     unsafe {
         SetWindowLongPtrW(window.hwnd(), GWL_WNDPROC, app_wnd_proc as usize as isize);
     }
 
-    // キャプチャ防止設定
-    window.set_display_affinity(config.behavior.exclude_from_capture);
-
-    // Direct2D レンダラー作成
-    let mut renderer =
-        D2DRenderer::new(&config.style)
-            .unwrap_or_else(|e| fatal_error(&format!("D2D renderer creation failed: {e}")));
+    let mut renderer = D2DRenderer::new(&config.style)
+        .unwrap_or_else(|e| fatal_error(&format!("D2D renderer creation failed: {e}")));
     renderer.update_dpi(window.dpi);
 
-    // 表示状態管理
     let mut state = DisplayState::new(&config);
+    let mut intervals = RuntimeIntervals {
+        frame_duration: Duration::from_millis(config.performance.frame_interval_ms),
+        ime_poll_interval: Duration::from_millis(config.performance.ime_poll_interval_ms),
+        config_reload_interval: Duration::from_millis(config.performance.config_reload_interval_ms),
+    };
 
-    // イベントチャネル（hook thread → UI thread）
+    apply_config(
+        ApplyReason::Startup,
+        &config,
+        &mut state,
+        &mut renderer,
+        &mut window,
+        &mut intervals,
+    );
+
     let (tx, rx) = mpsc::sync_channel::<InputEvent>(256);
     let _ = EVENT_TX.set(tx.clone());
 
-    // キーボードフック起動（別スレッド）
     let _hook_thread = install_keyboard_hook(tx.clone());
 
-    // クリップボードリスナー登録（WM_CLIPBOARDUPDATE を受信可能にする）
     let _clipboard_listener = match ClipboardListener::new(window.hwnd()) {
         Ok(listener) => Some(listener),
         Err(e) => {
-            eprintln!("clipboard listener failed: {}", e);
+            logger::log(DiagnosticsLevel::Warn, &format!("clipboard listener failed: {e}"));
             None
         }
     };
 
-    // グローバルホットキー登録
-    register_toggle_hotkey(window.hwnd(), &config.hotkey.toggle);
-
-    // システムトレイアイコン作成
     let _tray = tray::TrayIcon::new(window.hwnd())
         .unwrap_or_else(|e| fatal_error(&format!("Tray icon creation failed: {e}")));
 
-    // メインループ
     let mut msg = MSG::default();
-    let frame_duration = Duration::from_millis(16);
     let mut last_ime_poll = Instant::now();
     let mut last_config_check = Instant::now();
-    let config_check_interval = Duration::from_secs(1);
     let mut privacy_active = false;
     let mut was_rendering = false;
     let mut last_foreground_hwnd = HWND::default();
 
     loop {
-        // Win32 メッセージ処理
         unsafe {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 if msg.message == WM_QUIT {
@@ -273,7 +366,6 @@ fn main() {
             }
         }
 
-        // イベント受信（OSD無効時はイベント破棄）
         let enabled = OSD_ENABLED.load(Ordering::Relaxed);
         while let Ok(event) = rx.try_recv() {
             match &event {
@@ -289,14 +381,28 @@ fn main() {
                     continue;
                 }
                 InputEvent::ConfigChanged => {
-                    if let Some(cfg_mutex) = CURRENT_CONFIG.get() {
-                        if let Ok(new_cfg) = cfg_mutex.lock() {
-                            let new_config = new_cfg.clone();
-                            drop(new_cfg);
-                            state.update_config(&new_config);
-                            renderer.update_style(&new_config.style);
-                            window.set_display_affinity(new_config.behavior.exclude_from_capture);
-                            config = new_config;
+                    if let Some(path) = CONFIG_PATH.get() {
+                        match AppConfig::load_strict(path) {
+                            Ok(new_config) => {
+                                apply_config(
+                                    ApplyReason::UiEdit,
+                                    &new_config,
+                                    &mut state,
+                                    &mut renderer,
+                                    &mut window,
+                                    &mut intervals,
+                                );
+                                if let Some(cfg_mutex) = CURRENT_CONFIG.get() {
+                                    if let Ok(mut cfg) = cfg_mutex.lock() {
+                                        *cfg = new_config.clone();
+                                    }
+                                }
+                                config = new_config;
+                            }
+                            Err(e) => logger::log(
+                                DiagnosticsLevel::Warn,
+                                &format!("ConfigChanged reload failed: {e}"),
+                            ),
                         }
                     }
                     continue;
@@ -308,10 +414,8 @@ fn main() {
             }
         }
 
-        // IME ポーリング（50ms 間隔）
         let now = Instant::now();
-        if now.duration_since(last_ime_poll) >= IME_POLL_INTERVAL {
-            // フォアグラウンドウィンドウ変更時のみ privacy 判定 + モニター再配置
+        if now.duration_since(last_ime_poll) >= intervals.ime_poll_interval {
             let fg = unsafe { GetForegroundWindow() };
             if fg != last_foreground_hwnd {
                 last_foreground_hwnd = fg;
@@ -330,31 +434,40 @@ fn main() {
             last_ime_poll = now;
         }
 
-        // 設定ホットリロード（1秒間隔）
-        if now.duration_since(last_config_check) >= config_check_interval {
-            if let Some(new_config) = config.check_reload(&config_path) {
-                state.update_config(&new_config);
-                renderer.update_style(&new_config.style);
-                window.set_display_affinity(new_config.behavior.exclude_from_capture);
-                if let Some(cfg_mutex) = CURRENT_CONFIG.get() {
-                    if let Ok(mut cfg) = cfg_mutex.lock() {
-                        *cfg = new_config.clone();
+        if now.duration_since(last_config_check) >= intervals.config_reload_interval {
+            match config.check_reload(&config_path) {
+                Ok(Some(new_config)) => {
+                    apply_config(
+                        ApplyReason::HotReload,
+                        &new_config,
+                        &mut state,
+                        &mut renderer,
+                        &mut window,
+                        &mut intervals,
+                    );
+                    if let Some(cfg_mutex) = CURRENT_CONFIG.get() {
+                        if let Ok(mut cfg) = cfg_mutex.lock() {
+                            *cfg = new_config.clone();
+                        }
                     }
+                    config = new_config;
                 }
-                config = new_config;
+                Ok(None) => {}
+                Err(e) => logger::log(
+                    DiagnosticsLevel::Warn,
+                    &format!("Hot reload skipped (invalid config): {e}"),
+                ),
             }
             last_config_check = now;
         }
 
-        // アニメーション更新
         state.tick(Instant::now());
 
         let has_items = !state.active_items().is_empty();
 
         if has_items || was_rendering {
-            // 描画が必要（アクティブ、またはクリア用の最終フレーム）
             let items = state.active_items();
-            let ghost_opacity = calculate_ghost_opacity(&window);
+            let ghost_opacity = calculate_ghost_opacity(&window, &config);
             let interactive = ghost_opacity > 0.0 && is_cursor_in_rect(&window.get_rect());
             GHOST_INTERACTIVE.store(interactive, Ordering::Relaxed);
             window.set_interactive(interactive);
@@ -367,17 +480,17 @@ fn main() {
                 window.height() as u32,
                 ghost_opacity,
             ) {
-                eprintln!("Render error: {e}");
+                logger::log(DiagnosticsLevel::Warn, &format!("Render error: {e}"));
                 if let Ok(new_renderer) = D2DRenderer::new(&config.style) {
                     renderer = new_renderer;
+                    renderer.update_dpi(window.dpi);
                 }
             }
             window.present(config.style.opacity);
 
             was_rendering = has_items;
-            std::thread::sleep(frame_duration);
+            std::thread::sleep(intervals.frame_duration);
         } else {
-            // アイドル: 描画をスキップし、メッセージまたはタイムアウト(50ms)で待機
             unsafe {
                 MsgWaitForMultipleObjects(None, false, 50, QS_ALLINPUT);
             }
@@ -385,32 +498,119 @@ fn main() {
     }
 }
 
-/// Ctrl押下 + カーソル距離 (100px閾値) から ghost不透明度を計算
-fn calculate_ghost_opacity(window: &OsdWindow) -> f32 {
+fn apply_config(
+    reason: ApplyReason,
+    config: &AppConfig,
+    state: &mut DisplayState,
+    renderer: &mut D2DRenderer,
+    window: &mut OsdWindow,
+    intervals: &mut RuntimeIntervals,
+) {
+    state.update_config(config);
+    renderer.update_style(&config.style);
+    window.set_display_affinity(config.behavior.exclude_from_capture);
+
+    if window.width() != config.performance.osd_width || window.height() != config.performance.osd_height {
+        window.resize(config.performance.osd_width, config.performance.osd_height);
+    }
+
+    intervals.frame_duration = Duration::from_millis(config.performance.frame_interval_ms);
+    intervals.ime_poll_interval = Duration::from_millis(config.performance.ime_poll_interval_ms);
+    intervals.config_reload_interval =
+        Duration::from_millis(config.performance.config_reload_interval_ms);
+
     unsafe {
-        // Ctrl キー押下チェック
-        let ctrl_down = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16) & 0x8000 != 0;
-        if !ctrl_down {
+        let _ = UnregisterHotKey(window.hwnd(), HOTKEY_TOGGLE_ID);
+    }
+    register_toggle_hotkey(window.hwnd(), &config.hotkey.toggle);
+
+    logger::update_config(&config.diagnostics);
+
+    if autostart::set_autostart(config.startup.autostart_enabled).is_err() {
+        logger::log(
+            DiagnosticsLevel::Warn,
+            "Failed to apply startup.autostart_enabled",
+        );
+    }
+
+    if matches!(reason, ApplyReason::Startup) {
+        OSD_ENABLED.store(config.tray.start_osd_enabled, Ordering::Relaxed);
+    }
+}
+
+fn load_config_with_recovery(config_path: &Path) -> AppConfig {
+    match AppConfig::load_strict(config_path) {
+        Ok(cfg) => cfg,
+        Err(ConfigError::IoError(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            AppConfig::create_default(config_path).unwrap_or_else(|err| {
+                fatal_error(&format!("Failed to create default config: {err}"))
+            })
+        }
+        Err(err) => {
+            let backup_result = backup_invalid_config(config_path);
+            match &backup_result {
+                Ok(path) => eprintln!("invalid config backed up to {}", path.display()),
+                Err(e) => eprintln!("backup failed: {}", e),
+            }
+
+            eprintln!("invalid config recovered with defaults: {}", err);
+            AppConfig::create_default(config_path).unwrap_or_else(|create_err| {
+                fatal_error(&format!(
+                    "Failed to recover invalid config (original: {err}, recover: {create_err})"
+                ))
+            })
+        }
+    }
+}
+
+fn backup_invalid_config(config_path: &Path) -> Result<PathBuf, std::io::Error> {
+    if !config_path.exists() {
+        return Ok(config_path.to_path_buf());
+    }
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let file_name = config_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("config.json");
+    let backup_name = format!("{}.invalid.{}.json", file_name, stamp);
+    let backup_path = config_path.with_file_name(backup_name);
+
+    std::fs::rename(config_path, &backup_path)?;
+    Ok(backup_path)
+}
+
+/// Modifier key + cursor distance determines ghost opacity.
+fn calculate_ghost_opacity(window: &OsdWindow, config: &AppConfig) -> f32 {
+    unsafe {
+        let modifier_down = match config.animation.ghost_modifier {
+            GhostModifier::Ctrl => (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16) & 0x8000 != 0,
+            GhostModifier::Alt => (GetAsyncKeyState(VK_MENU.0 as i32) as u16) & 0x8000 != 0,
+            GhostModifier::Shift => (GetAsyncKeyState(VK_SHIFT.0 as i32) as u16) & 0x8000 != 0,
+        };
+        if !modifier_down {
             return 0.0;
         }
 
-        // カーソル位置取得
         let mut cursor = POINT::default();
         if GetCursorPos(&mut cursor).is_err() {
             return 0.0;
         }
 
-        // ウィンドウ矩形までの距離
         let rect = window.get_rect();
         let distance = distance_to_rect(&cursor, &rect);
 
-        // 100px以内でフェードイン (距離0で1.0、100pxで0.0)
-        let threshold = 100.0_f32;
-        (1.0 - distance / threshold).clamp(0.0, 1.0)
+        let threshold = config.animation.ghost_threshold_px.max(1.0);
+        let base = (1.0 - distance / threshold).clamp(0.0, 1.0);
+        (base * config.animation.ghost_max_opacity).clamp(0.0, 1.0)
     }
 }
 
-/// カーソルからRECTまでの距離 (内側なら0)
+/// Cursor distance to rectangle (0 when inside).
 fn distance_to_rect(cursor: &POINT, rect: &RECT) -> f32 {
     let dx = if cursor.x < rect.left {
         rect.left - cursor.x
@@ -429,7 +629,7 @@ fn distance_to_rect(cursor: &POINT, rect: &RECT) -> f32 {
     ((dx * dx + dy * dy) as f32).sqrt()
 }
 
-/// カーソルがRECT内にあるか
+/// Check whether cursor is inside rectangle.
 fn is_cursor_in_rect(rect: &RECT) -> bool {
     unsafe {
         let mut cursor = POINT::default();
@@ -444,7 +644,7 @@ fn is_cursor_in_rect(rect: &RECT) -> bool {
     }
 }
 
-/// 現在のウィンドウ位置をconfig.jsonに保存
+/// Save current window position to config file.
 fn save_current_position(hwnd: HWND) {
     unsafe {
         let mut rect = RECT::default();
@@ -460,7 +660,12 @@ fn save_current_position(hwnd: HWND) {
                         .monitor_positions
                         .insert(device_name, [rect.left, rect.top]);
                     if let Some(path) = CONFIG_PATH.get() {
-                        let _ = cfg.save(path);
+                        if let Err(e) = cfg.save_atomic(path) {
+                            logger::log(
+                                DiagnosticsLevel::Warn,
+                                &format!("Failed to save monitor position: {e}"),
+                            );
+                        }
                     }
                 }
             }
@@ -468,25 +673,28 @@ fn save_current_position(hwnd: HWND) {
     }
 }
 
-/// ホットキー文字列（例: "Ctrl+Alt+F12"）をパースして RegisterHotKey で登録
+/// Parse hotkey string and register with RegisterHotKey.
 fn register_toggle_hotkey(hwnd: HWND, hotkey_str: &str) {
     if hotkey_str.is_empty() {
         return;
     }
 
     let Some((modifiers, vk)) = parse_hotkey(hotkey_str) else {
-        eprintln!("invalid hotkey: {}", hotkey_str);
+        logger::log(DiagnosticsLevel::Warn, &format!("invalid hotkey: {}", hotkey_str));
         return;
     };
 
     unsafe {
         if RegisterHotKey(hwnd, HOTKEY_TOGGLE_ID, modifiers, vk).is_err() {
-            eprintln!("RegisterHotKey failed for: {}", hotkey_str);
+            logger::log(
+                DiagnosticsLevel::Warn,
+                &format!("RegisterHotKey failed for: {}", hotkey_str),
+            );
         }
     }
 }
 
-/// ホットキー文字列をパースして (MOD_*, VKコード) に変換
+/// Convert hotkey string to (MOD_*, VK).
 fn parse_hotkey(s: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     let mut modifiers = MOD_NOREPEAT;
     let mut vk = None;
@@ -504,27 +712,74 @@ fn parse_hotkey(s: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     Some((modifiers, vk?))
 }
 
-/// キー名から Win32 仮想キーコードへの変換
+/// Convert key name to Win32 virtual key code.
 fn key_name_to_vk(name: &str) -> Option<u32> {
     let vk = match name {
-        "F1" => 0x70, "F2" => 0x71, "F3" => 0x72, "F4" => 0x73,
-        "F5" => 0x74, "F6" => 0x75, "F7" => 0x76, "F8" => 0x77,
-        "F9" => 0x78, "F10" => 0x79, "F11" => 0x7A, "F12" => 0x7B,
-        "0" => 0x30, "1" => 0x31, "2" => 0x32, "3" => 0x33,
-        "4" => 0x34, "5" => 0x35, "6" => 0x36, "7" => 0x37,
-        "8" => 0x38, "9" => 0x39,
-        "A" => 0x41, "B" => 0x42, "C" => 0x43, "D" => 0x44,
-        "E" => 0x45, "F" => 0x46, "G" => 0x47, "H" => 0x48,
-        "I" => 0x49, "J" => 0x4A, "K" => 0x4B, "L" => 0x4C,
-        "M" => 0x4D, "N" => 0x4E, "O" => 0x4F, "P" => 0x50,
-        "Q" => 0x51, "R" => 0x52, "S" => 0x53, "T" => 0x54,
-        "U" => 0x55, "V" => 0x56, "W" => 0x57, "X" => 0x58,
-        "Y" => 0x59, "Z" => 0x5A,
-        "Space" => 0x20, "Enter" => 0x0D, "Tab" => 0x09,
-        "Esc" => 0x1B, "BS" => 0x08, "Del" => 0x2E, "Ins" => 0x2D,
-        "Home" => 0x24, "End" => 0x23, "PgUp" => 0x21, "PgDn" => 0x22,
-        "Left" => 0x25, "Up" => 0x26, "Right" => 0x27, "Down" => 0x28,
-        "Pause" => 0x13, "PrtSc" => 0x2C,
+        "F1" => 0x70,
+        "F2" => 0x71,
+        "F3" => 0x72,
+        "F4" => 0x73,
+        "F5" => 0x74,
+        "F6" => 0x75,
+        "F7" => 0x76,
+        "F8" => 0x77,
+        "F9" => 0x78,
+        "F10" => 0x79,
+        "F11" => 0x7A,
+        "F12" => 0x7B,
+        "0" => 0x30,
+        "1" => 0x31,
+        "2" => 0x32,
+        "3" => 0x33,
+        "4" => 0x34,
+        "5" => 0x35,
+        "6" => 0x36,
+        "7" => 0x37,
+        "8" => 0x38,
+        "9" => 0x39,
+        "A" => 0x41,
+        "B" => 0x42,
+        "C" => 0x43,
+        "D" => 0x44,
+        "E" => 0x45,
+        "F" => 0x46,
+        "G" => 0x47,
+        "H" => 0x48,
+        "I" => 0x49,
+        "J" => 0x4A,
+        "K" => 0x4B,
+        "L" => 0x4C,
+        "M" => 0x4D,
+        "N" => 0x4E,
+        "O" => 0x4F,
+        "P" => 0x50,
+        "Q" => 0x51,
+        "R" => 0x52,
+        "S" => 0x53,
+        "T" => 0x54,
+        "U" => 0x55,
+        "V" => 0x56,
+        "W" => 0x57,
+        "X" => 0x58,
+        "Y" => 0x59,
+        "Z" => 0x5A,
+        "Space" => 0x20,
+        "Enter" => 0x0D,
+        "Tab" => 0x09,
+        "Esc" => 0x1B,
+        "BS" => 0x08,
+        "Del" => 0x2E,
+        "Ins" => 0x2D,
+        "Home" => 0x24,
+        "End" => 0x23,
+        "PgUp" => 0x21,
+        "PgDn" => 0x22,
+        "Left" => 0x25,
+        "Up" => 0x26,
+        "Right" => 0x27,
+        "Down" => 0x28,
+        "Pause" => 0x13,
+        "PrtSc" => 0x2C,
         _ => return None,
     };
     Some(vk)

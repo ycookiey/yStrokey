@@ -5,6 +5,8 @@ use windows::Win32::Foundation::*;
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use ystrokey_core::MenuLanguage;
+
 pub const WM_TRAYICON: u32 = WM_USER + 1;
 pub const ID_TRAY_TOGGLE: u32 = 1001;
 pub const ID_TRAY_EXIT: u32 = 1002;
@@ -65,56 +67,85 @@ impl Drop for TrayIcon {
 }
 
 /// トレイ右クリックメニューを表示
-pub fn show_context_menu(hwnd: HWND) {
+pub fn show_context_menu(
+    hwnd: HWND,
+    menu_language: MenuLanguage,
+    osd_enabled: bool,
+    autostart_enabled: bool,
+) {
     unsafe {
         let menu = match CreatePopupMenu() {
             Ok(m) => m,
             Err(_) => return,
         };
 
-        let _ = AppendMenuW(
-            menu,
-            MF_STRING,
-            ID_TRAY_TOGGLE as usize,
-            w!("有効/無効 切替 (&T)"),
-        );
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-        let autostart_flags = if super::autostart::is_autostart_enabled() {
+        let toggle_flags = if osd_enabled {
             MF_STRING | MF_CHECKED
         } else {
             MF_STRING
         };
+        let autostart_flags = if autostart_enabled {
+            MF_STRING | MF_CHECKED
+        } else {
+            MF_STRING
+        };
+
+        let _ = AppendMenuW(
+            menu,
+            toggle_flags,
+            ID_TRAY_TOGGLE as usize,
+            match menu_language {
+                MenuLanguage::Ja => w!("有効/無効 切替 (&T)"),
+                MenuLanguage::En => w!("Toggle OSD (&T)"),
+            },
+        );
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(
             menu,
             autostart_flags,
             ID_TRAY_AUTOSTART as usize,
-            w!("Auto Start (&A)"),
+            match menu_language {
+                MenuLanguage::Ja => w!("自動起動 (&A)"),
+                MenuLanguage::En => w!("Auto Start (&A)"),
+            },
         );
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(
             menu,
             MF_STRING,
             ID_TRAY_SETTINGS as usize,
-            w!("設定 (&S)"),
+            match menu_language {
+                MenuLanguage::Ja => w!("設定 (&S)"),
+                MenuLanguage::En => w!("Settings (&S)"),
+            },
         );
         let _ = AppendMenuW(
             menu,
             MF_STRING,
             ID_TRAY_EXPORT as usize,
-            w!("エクスポート (&E)"),
+            match menu_language {
+                MenuLanguage::Ja => w!("エクスポート (&E)"),
+                MenuLanguage::En => w!("Export (&E)"),
+            },
         );
         let _ = AppendMenuW(
             menu,
             MF_STRING,
             ID_TRAY_IMPORT as usize,
-            w!("インポート (&I)"),
+            match menu_language {
+                MenuLanguage::Ja => w!("インポート (&I)"),
+                MenuLanguage::En => w!("Import (&I)"),
+            },
         );
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(
             menu,
             MF_STRING,
             ID_TRAY_EXIT as usize,
-            w!("終了 (&X)"),
+            match menu_language {
+                MenuLanguage::Ja => w!("終了 (&X)"),
+                MenuLanguage::En => w!("Exit (&X)"),
+            },
         );
 
         let mut pt = POINT::default();

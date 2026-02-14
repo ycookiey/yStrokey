@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::config::{AppConfig, ShortcutDef};
+use crate::config::{AppConfig, FadeOutCurve, ShortcutDef};
 use crate::event::*;
 use crate::key::KeyCode;
 
@@ -311,8 +311,14 @@ impl DisplayState {
                     let fade_start = item.created_at + display_dur;
                     let fade_elapsed = now.duration_since(fade_start);
                     let progress =
-                        fade_elapsed.as_secs_f32() / fade_dur.as_secs_f32();
-                    item.opacity = (1.0 - progress).max(0.0);
+                        (fade_elapsed.as_secs_f32() / fade_dur.as_secs_f32()).clamp(0.0, 1.0);
+                    item.opacity = match self.config.animation.fade_out_curve {
+                        FadeOutCurve::Linear => (1.0 - progress).max(0.0),
+                        FadeOutCurve::EaseOut => {
+                            let inv = 1.0 - progress;
+                            (inv * inv).max(0.0)
+                        }
+                    };
                     if item.opacity <= 0.0 {
                         item.phase = DisplayPhase::Expired;
                     }
