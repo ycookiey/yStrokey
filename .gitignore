@@ -15,3 +15,7 @@ nul
 
 # Logs
 *.log
+
+# Local temp build artifacts
+.tmp_build_check/
+/target2*/

@@ -66,7 +66,7 @@ pub fn export_config(config: &AppConfig) -> Result<(), ystrokey_core::AppError> 
         let _ = dialog.SetFileName(&HSTRING::from("ystrokey_config.json"));
 
         if let Some(path) = get_path_from_dialog(&dialog)? {
-            config.save(&path)?;
+            config.save_atomic(&path)?;
         }
         Ok(())
     }
@@ -84,7 +84,7 @@ pub fn import_config() -> Result<Option<AppConfig>, ystrokey_core::AppError> {
 
         match get_path_from_dialog(&dialog)? {
             Some(path) => {
-                let config = AppConfig::load(&path)?;
+                let config = AppConfig::load_strict(&path)?;
                 Ok(Some(config))
             }
             None => Ok(None),
