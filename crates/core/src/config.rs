@@ -71,7 +71,7 @@ pub struct StyleConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BehaviorConfig {
-    pub show_key_down_up: bool,
+    pub key_transition_mode: KeyTransitionMode,
     pub show_repeat_count: bool,
     pub distinguish_numpad: bool,
     pub show_ime_composition: bool,
@@ -83,6 +83,13 @@ pub struct BehaviorConfig {
     pub max_group_size: usize,
     pub ignored_keys: Vec<String>,
     pub exclude_from_capture: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum KeyTransitionMode {
+    SingleCell,
+    SplitCells,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,7 +238,7 @@ impl Default for StyleConfig {
 impl Default for BehaviorConfig {
     fn default() -> Self {
         Self {
-            show_key_down_up: true,
+            key_transition_mode: KeyTransitionMode::SingleCell,
             show_repeat_count: true,
             distinguish_numpad: true,
             show_ime_composition: true,
@@ -477,7 +484,26 @@ impl AppConfig {
         }
 
         if config_path.exists() {
-            replace_file(config_path, &tmp_path)?;
+            if let Err(replace_err) = replace_file(config_path, &tmp_path) {
+                // Fallback for environments where ReplaceFileW returns ACCESS_DENIED.
+                let direct_write = (|| -> Result<(), std::io::Error> {
+                    let mut file = File::create(config_path)?;
+                    file.write_all(json.as_bytes())?;
+                    file.sync_all()?;
+                    Ok(())
+                })();
+
+                let _ = std::fs::remove_file(&tmp_path);
+
+                if let Err(write_err) = direct_write {
+                    return Err(ConfigError::IoError(std::io::Error::new(
+                        write_err.kind(),
+                        format!(
+                            "replace failed: {replace_err}; fallback write failed: {write_err}"
+                        ),
+                    )));
+                }
+            }
         } else {
             std::fs::rename(&tmp_path, config_path)?;
         }
@@ -577,5 +603,14 @@ mod tests {
         assert_eq!(loaded.performance.frame_interval_ms, 20);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn default_uses_single_cell_key_transition_mode() {
+        let cfg = AppConfig::default();
+        assert_eq!(
+            cfg.behavior.key_transition_mode,
+            KeyTransitionMode::SingleCell
+        );
     }
 }

@@ -6,8 +6,8 @@ pub mod state;
 
 pub use config::{
     AnimationConfig, AppConfig, BehaviorConfig, DiagnosticsConfig, DiagnosticsLevel, DisplayConfig,
-    FadeOutCurve, GhostModifier, HotkeyConfig, MenuLanguage, PerformanceConfig, Position,
-    PrivacyConfig, SCHEMA_VERSION, ShortcutDef, StartupConfig, StyleConfig, TrayConfig,
+    FadeOutCurve, GhostModifier, HotkeyConfig, KeyTransitionMode, MenuLanguage, PerformanceConfig,
+    Position, PrivacyConfig, SCHEMA_VERSION, ShortcutDef, StartupConfig, StyleConfig, TrayConfig,
 };
 pub use error::{AppError, ConfigError, HookError, RenderError};
 pub use event::{
