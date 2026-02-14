@@ -11,20 +11,24 @@ fn win32_err(e: impl std::fmt::Display) -> ystrokey_core::AppError {
     ystrokey_core::AppError::Win32(e.to_string())
 }
 
-struct ComGuard;
+struct ComGuard {
+    initialized: bool,
+}
 
 impl ComGuard {
     fn new() -> Self {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-        }
-        Self
+        let initialized = unsafe {
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE).is_ok()
+        };
+        Self { initialized }
     }
 }
 
 impl Drop for ComGuard {
     fn drop(&mut self) {
-        unsafe { CoUninitialize() }
+        if self.initialized {
+            unsafe { CoUninitialize() }
+        }
     }
 }
 
@@ -80,7 +84,7 @@ pub fn import_config() -> Result<Option<AppConfig>, ystrokey_core::AppError> {
 
         match get_path_from_dialog(&dialog)? {
             Some(path) => {
-                let config = AppConfig::load_or_create(&path)?;
+                let config = AppConfig::load(&path)?;
                 Ok(Some(config))
             }
             None => Ok(None),

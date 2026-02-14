@@ -251,9 +251,10 @@ impl D2DRenderer {
         }
     }
 
-    /// StyleConfig変更時にブラシを再生成
+    /// StyleConfig変更時にブラシ・フォントを再生成
     pub fn update_style(&mut self, style: &StyleConfig) {
         unsafe {
+            // ブラシ更新
             if let Ok(b) = self.render_target.CreateSolidColorBrush(&parse_color(&style.text_color), None) {
                 self.text_brush = b;
             }
@@ -262,6 +263,42 @@ impl D2DRenderer {
             }
             if let Ok(b) = self.render_target.CreateSolidColorBrush(&parse_color(&style.shortcut_color), None) {
                 self.shortcut_brush = b;
+            }
+
+            // フォント更新
+            let font_wide = to_wide(&style.font_family);
+            if let Ok(f) = self.dwrite_factory.CreateTextFormat(
+                PCWSTR(font_wide.as_ptr()),
+                None,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                style.font_size,
+                w!("ja-JP"),
+            ) {
+                self.text_format = f;
+            }
+            if let Ok(f) = self.dwrite_factory.CreateTextFormat(
+                PCWSTR(font_wide.as_ptr()),
+                None,
+                DWRITE_FONT_WEIGHT_MEDIUM,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                style.font_size * 0.85,
+                w!("ja-JP"),
+            ) {
+                self.label_text_format = f;
+            }
+            if let Ok(f) = self.dwrite_factory.CreateTextFormat(
+                PCWSTR(font_wide.as_ptr()),
+                None,
+                DWRITE_FONT_WEIGHT_BOLD,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                style.font_size * 0.75,
+                w!("ja-JP"),
+            ) {
+                self.count_text_format = f;
             }
         }
     }
@@ -411,7 +448,8 @@ impl D2DRenderer {
         let bottom = size.height;
         let top = bottom - total_height;
 
-        let margin = 4.0_f32;
+        let margin = 4.0_f32 * s;
+        let border_radius = style.border_radius * s;
         let bg_rect = D2D_RECT_F {
             left: margin,
             top: top - margin,
@@ -421,8 +459,8 @@ impl D2DRenderer {
 
         let rounded = D2D1_ROUNDED_RECT {
             rect: bg_rect,
-            radiusX: style.border_radius + 4.0,
-            radiusY: style.border_radius + 4.0,
+            radiusX: border_radius + 4.0 * s,
+            radiusY: border_radius + 4.0 * s,
         };
 
         // 暗め背景塗り
@@ -448,27 +486,31 @@ impl D2DRenderer {
         bg_brush: &ID2D1SolidColorBrush,
         text_brush: &ID2D1SolidColorBrush,
     ) {
+        let s = self.dpi_scale;
+        let padding = style.padding * s;
+        let border_radius = style.border_radius * s;
+
         let rect = D2D_RECT_F {
-            left: style.padding,
+            left: padding,
             top,
-            right: width - style.padding,
+            right: width - padding,
             bottom,
         };
 
         let rounded = D2D1_ROUNDED_RECT {
             rect,
-            radiusX: style.border_radius,
-            radiusY: style.border_radius,
+            radiusX: border_radius,
+            radiusY: border_radius,
         };
 
         self.render_target
             .FillRoundedRectangle(&rounded, bg_brush);
 
         let text_rect = D2D_RECT_F {
-            left: rect.left + style.padding,
-            top: rect.top + style.padding / 2.0,
-            right: rect.right - style.padding,
-            bottom: rect.bottom - style.padding / 2.0,
+            left: rect.left + padding,
+            top: rect.top + padding / 2.0,
+            right: rect.right - padding,
+            bottom: rect.bottom - padding / 2.0,
         };
 
         let text_wide: Vec<u16> = text.encode_utf16().collect();
@@ -494,18 +536,22 @@ impl D2DRenderer {
         style: &StyleConfig,
         opacity: f32,
     ) {
+        let s = self.dpi_scale;
+        let padding = style.padding * s;
+        let border_radius = style.border_radius * s;
+
         // 背景全体（紫ベース: 修飾キー込みのショートカット）
         let rect = D2D_RECT_F {
-            left: style.padding,
+            left: padding,
             top,
-            right: width - style.padding,
+            right: width - padding,
             bottom,
         };
 
         let rounded = D2D1_ROUNDED_RECT {
             rect,
-            radiusX: style.border_radius,
-            radiusY: style.border_radius,
+            radiusX: border_radius,
+            radiusY: border_radius,
         };
 
         self.modifier_brush.SetOpacity(opacity);
@@ -514,10 +560,10 @@ impl D2DRenderer {
 
         // keys_label（左側、白文字）
         let keys_rect = D2D_RECT_F {
-            left: rect.left + style.padding,
-            top: rect.top + style.padding / 2.0,
-            right: rect.right - style.padding,
-            bottom: rect.bottom - style.padding / 2.0,
+            left: rect.left + padding,
+            top: rect.top + padding / 2.0,
+            right: rect.right - padding,
+            bottom: rect.bottom - padding / 2.0,
         };
 
         self.text_brush.SetOpacity(opacity);
@@ -547,8 +593,8 @@ impl D2DRenderer {
             let _ = layout.GetMetrics(&mut metrics);
             let keys_width = metrics.width;
 
-            let badge_left = rect.left + style.padding + keys_width + 8.0;
-            let badge_padding = 6.0_f32;
+            let badge_left = rect.left + padding + keys_width + 8.0 * s;
+            let badge_padding = 6.0_f32 * s;
 
             // action_labelの幅を計測
             let action_wide: Vec<u16> = action_label.encode_utf16().collect();
@@ -568,15 +614,15 @@ impl D2DRenderer {
 
                 let badge_rect = D2D_RECT_F {
                     left: badge_left,
-                    top: top + 3.0,
+                    top: top + 3.0 * s,
                     right: badge_left + action_width + badge_padding * 2.0,
-                    bottom: bottom - 3.0,
+                    bottom: bottom - 3.0 * s,
                 };
 
                 let badge_rounded = D2D1_ROUNDED_RECT {
                     rect: badge_rect,
-                    radiusX: 4.0,
-                    radiusY: 4.0,
+                    radiusX: 4.0 * s,
+                    radiusY: 4.0 * s,
                 };
 
                 self.shortcut_brush.SetOpacity(opacity);
@@ -616,18 +662,22 @@ impl D2DRenderer {
         text_brush: &ID2D1SolidColorBrush,
         opacity: f32,
     ) {
+        let s = self.dpi_scale;
+        let padding = style.padding * s;
+        let border_radius = style.border_radius * s;
+
         // 背景
         let rect = D2D_RECT_F {
-            left: style.padding,
+            left: padding,
             top,
-            right: width - style.padding,
+            right: width - padding,
             bottom,
         };
 
         let rounded = D2D1_ROUNDED_RECT {
             rect,
-            radiusX: style.border_radius,
-            radiusY: style.border_radius,
+            radiusX: border_radius,
+            radiusY: border_radius,
         };
 
         self.render_target
@@ -635,10 +685,10 @@ impl D2DRenderer {
 
         // メインテキスト
         let text_rect = D2D_RECT_F {
-            left: rect.left + style.padding,
-            top: rect.top + style.padding / 2.0,
-            right: rect.right - style.padding,
-            bottom: rect.bottom - style.padding / 2.0,
+            left: rect.left + padding,
+            top: rect.top + padding / 2.0,
+            right: rect.right - padding,
+            bottom: rect.bottom - padding / 2.0,
         };
 
         let main_wide: Vec<u16> = main_text.encode_utf16().collect();
@@ -664,13 +714,13 @@ impl D2DRenderer {
             let _ = layout.GetMetrics(&mut metrics);
             let main_width = metrics.width;
 
-            let count_left = rect.left + style.padding + main_width;
+            let count_left = rect.left + padding + main_width;
 
             let count_rect = D2D_RECT_F {
                 left: count_left,
-                top: rect.top + style.padding / 2.0,
-                right: rect.right - style.padding,
-                bottom: rect.bottom - style.padding / 2.0,
+                top: rect.top + padding / 2.0,
+                right: rect.right - padding,
+                bottom: rect.bottom - padding / 2.0,
             };
 
             self.count_brush.SetOpacity(opacity);
@@ -697,11 +747,13 @@ impl D2DRenderer {
         style: &StyleConfig,
         opacity: f32,
     ) {
-        let pill_gap = 4.0_f32;
-        let pill_padding_h = 8.0_f32;
-        let pill_padding_v = 3.0_f32;
-        let pill_radius = 4.0_f32;
-        let mut cursor_x = style.padding;
+        let s = self.dpi_scale;
+        let padding = style.padding * s;
+        let pill_gap = 4.0_f32 * s;
+        let pill_padding_h = 8.0_f32 * s;
+        let pill_padding_v = 3.0_f32 * s;
+        let pill_radius = 4.0_f32 * s;
+        let mut cursor_x = padding;
 
         for entry in strokes {
             // テキスト生成
@@ -727,7 +779,7 @@ impl D2DRenderer {
             let pill_width = text_width + pill_padding_h * 2.0;
 
             // 画面幅超過時は打ち切り
-            if cursor_x + pill_width > width - style.padding {
+            if cursor_x + pill_width > width - padding {
                 break;
             }
 

@@ -223,13 +223,18 @@ fn default_shortcuts() -> Vec<ShortcutDef> {
 }
 
 impl AppConfig {
+    /// 指定パスから設定を読み込み（ファイルが存在しない/不正なら エラー）。
+    pub fn load(config_path: &Path) -> Result<Self, ConfigError> {
+        let content = std::fs::read_to_string(config_path)?;
+        let mut config: Self = serde_json::from_str(&content)?;
+        config.last_modified = std::fs::metadata(config_path)?.modified().ok();
+        Ok(config)
+    }
+
     /// 指定パスから設定を読み込み。存在しなければデフォルト作成。
     pub fn load_or_create(config_path: &Path) -> Result<Self, ConfigError> {
         if config_path.exists() {
-            let content = std::fs::read_to_string(config_path)?;
-            let mut config: Self = serde_json::from_str(&content)?;
-            config.last_modified = std::fs::metadata(config_path)?.modified().ok();
-            Ok(config)
+            Self::load(config_path)
         } else {
             let mut config = Self::default();
             let json = serde_json::to_string_pretty(&config)?;

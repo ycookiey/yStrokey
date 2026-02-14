@@ -16,9 +16,22 @@ use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use windows::core::HSTRING;
+
 use ystrokey_core::{AppConfig, ClipboardContent, ClipboardEvent, DisplayState, InputEvent};
 use ystrokey_input::{install_keyboard_hook, is_privacy_target, poll_ime_state, ClipboardListener};
 use ystrokey_render::{get_monitor_device_name, D2DRenderer, OsdWindow};
+
+/// 致命的エラー時にメッセージボックスを表示して終了
+fn fatal_error(msg: &str) -> ! {
+    eprintln!("FATAL: {msg}");
+    unsafe {
+        let text = HSTRING::from(msg);
+        let caption = HSTRING::from("yStrokey Error");
+        MessageBoxW(None, &text, &caption, MB_OK | MB_ICONERROR);
+    }
+    std::process::exit(1);
+}
 
 use tray::{
     show_context_menu, ID_TRAY_AUTOSTART, ID_TRAY_EXIT, ID_TRAY_EXPORT, ID_TRAY_IMPORT,
@@ -87,7 +100,8 @@ unsafe extern "system" fn app_wnd_proc(
                 }
                 ID_TRAY_EXPORT => {
                     if let Some(cfg_mutex) = CURRENT_CONFIG.get() {
-                        if let Ok(cfg) = cfg_mutex.lock() {
+                        let cfg_clone = cfg_mutex.lock().ok().map(|c| c.clone());
+                        if let Some(cfg) = cfg_clone {
                             let _ = settings_io::export_config(&cfg);
                         }
                     }
@@ -194,7 +208,8 @@ fn main() {
     let _ = CURRENT_CONFIG.set(Mutex::new(config.clone()));
 
     // OSD ウィンドウ作成
-    let mut window = OsdWindow::create(OSD_WIDTH, OSD_HEIGHT, &config.display).expect("OSD window creation failed");
+    let mut window = OsdWindow::create(OSD_WIDTH, OSD_HEIGHT, &config.display)
+        .unwrap_or_else(|e| fatal_error(&format!("OSD window creation failed: {e}")));
 
     // ウィンドウプロシージャをアプリ用に差し替え
     unsafe {
@@ -207,7 +222,8 @@ fn main() {
     // Direct2D レンダラー作成
     let mut renderer =
         D2DRenderer::new(&config.style)
-            .expect("D2D renderer creation failed");
+            .unwrap_or_else(|e| fatal_error(&format!("D2D renderer creation failed: {e}")));
+    renderer.update_dpi(window.dpi);
 
     // 表示状態管理
     let mut state = DisplayState::new(&config);
@@ -232,7 +248,8 @@ fn main() {
     register_toggle_hotkey(window.hwnd(), &config.hotkey.toggle);
 
     // システムトレイアイコン作成
-    let _tray = tray::TrayIcon::new(window.hwnd()).expect("tray icon creation failed");
+    let _tray = tray::TrayIcon::new(window.hwnd())
+        .unwrap_or_else(|e| fatal_error(&format!("Tray icon creation failed: {e}")));
 
     // メインループ
     let mut msg = MSG::default();
@@ -242,6 +259,7 @@ fn main() {
     let config_check_interval = Duration::from_secs(1);
     let mut privacy_active = false;
     let mut was_rendering = false;
+    let mut last_foreground_hwnd = HWND::default();
 
     loop {
         // Win32 メッセージ処理
@@ -293,16 +311,21 @@ fn main() {
         // IME ポーリング（50ms 間隔）
         let now = Instant::now();
         if now.duration_since(last_ime_poll) >= IME_POLL_INTERVAL {
-            privacy_active = is_privacy_target(&config.privacy);
-            if enabled && !privacy_active {
-                poll_ime_state(&tx);
-            }
-            // Multi-monitor: reposition OSD to foreground window monitor
-            unsafe {
-                let fg = GetForegroundWindow();
+            // フォアグラウンドウィンドウ変更時のみ privacy 判定 + モニター再配置
+            let fg = unsafe { GetForegroundWindow() };
+            if fg != last_foreground_hwnd {
+                last_foreground_hwnd = fg;
+                let prev_privacy = privacy_active;
+                privacy_active = is_privacy_target(&config.privacy);
+                if privacy_active && !prev_privacy {
+                    state.clear();
+                }
                 if !fg.0.is_null() {
                     window.reposition_to_monitor(fg, &config.display);
                 }
+            }
+            if enabled && !privacy_active {
+                poll_ime_state(&tx);
             }
             last_ime_poll = now;
         }
@@ -336,14 +359,19 @@ fn main() {
             GHOST_INTERACTIVE.store(interactive, Ordering::Relaxed);
             window.set_interactive(interactive);
 
-            let _ = renderer.render(
+            if let Err(e) = renderer.render(
                 items,
                 &config.style,
                 window.mem_dc(),
                 window.width() as u32,
                 window.height() as u32,
                 ghost_opacity,
-            );
+            ) {
+                eprintln!("Render error: {e}");
+                if let Ok(new_renderer) = D2DRenderer::new(&config.style) {
+                    renderer = new_renderer;
+                }
+            }
             window.present(config.style.opacity);
 
             was_rendering = has_items;
