@@ -48,6 +48,7 @@ pub fn is_privacy_target(config: &PrivacyConfig) -> bool {
             .blocked_apps
             .iter()
             .any(|app| app.eq_ignore_ascii_case(&name)),
-        None => false,
+        // プロセス名取得失敗時は安全側（非表示）に倒す
+        None => true,
     }
 }

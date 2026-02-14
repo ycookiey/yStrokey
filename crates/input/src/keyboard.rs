@@ -160,8 +160,13 @@ pub fn run_hook_thread(tx: SyncSender<InputEvent>) {
 
     unsafe {
         let hmod = GetModuleHandleW(None).ok().map(|h| HINSTANCE(h.0));
-        let kb_hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), hmod.unwrap_or_default(), 0)
-            .expect("keyboard hook install failed");
+        let kb_hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), hmod.unwrap_or_default(), 0) {
+            Ok(hook) => hook,
+            Err(e) => {
+                eprintln!("keyboard hook install failed: {e}");
+                return;
+            }
+        };
 
         // LL hookはメッセージループが必須
         let mut msg = MSG::default();
@@ -179,5 +184,9 @@ pub fn install_keyboard_hook(tx: SyncSender<InputEvent>) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("keyboard-hook".into())
         .spawn(move || run_hook_thread(tx))
-        .expect("keyboard hook thread spawn failed")
+        .unwrap_or_else(|e| {
+            eprintln!("keyboard hook thread spawn failed: {e}");
+            // フォールバック: 現在のスレッドでダミーハンドルを返す
+            std::thread::spawn(|| {})
+        })
 }

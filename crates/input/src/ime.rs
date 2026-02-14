@@ -128,14 +128,16 @@ pub fn poll_ime_state(tx: &SyncSender<InputEvent>) {
             let prev = c.borrow();
             comp != *prev
         });
-        if changed && !comp.is_empty() {
-            let event = InputEvent::Ime(ImeEvent {
-                kind: ImeEventKind::CompositionUpdate {
-                    text: comp.clone(),
-                },
+        if changed {
+            let kind = if comp.is_empty() {
+                ImeEventKind::CompositionEnd { result: String::new() }
+            } else {
+                ImeEventKind::CompositionUpdate { text: comp.clone() }
+            };
+            let _ = tx.try_send(InputEvent::Ime(ImeEvent {
+                kind,
                 timestamp: Instant::now(),
-            });
-            let _ = tx.try_send(event);
+            }));
         }
         PREV_COMPOSITION.with(|c| {
             *c.borrow_mut() = comp;

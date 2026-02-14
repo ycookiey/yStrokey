@@ -328,6 +328,11 @@ impl DisplayState {
         &self.items
     }
 
+    /// 全アイテムをクリア（privacy遷移時等）
+    pub fn clear(&mut self) {
+        self.items.clear();
+    }
+
     pub fn has_animations(&self) -> bool {
         self.items
             .iter()

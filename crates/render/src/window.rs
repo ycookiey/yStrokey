@@ -176,17 +176,11 @@ impl OsdWindow {
     }
 
     pub fn resize(&mut self, width: i32, height: i32) {
-        self.width = width;
-        self.height = height;
         unsafe {
-            // 旧DIBセクション解放
-            SelectObject(self.mem_dc, self.old_bitmap);
-            let _ = DeleteObject(self.dib_bitmap);
-
-            // 新DIBセクション作成
+            // 新DIBセクションを先に作成（失敗時は旧DIBを維持）
             let bmi = create_bitmapinfo(width, height);
             let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-            let dib = CreateDIBSection(
+            let new_dib = CreateDIBSection(
                 HDC::default(),
                 &bmi,
                 DIB_RGB_COLORS,
@@ -194,10 +188,17 @@ impl OsdWindow {
                 None,
                 0,
             );
-            if let Ok(dib) = dib {
-                self.old_bitmap = SelectObject(self.mem_dc, HGDIOBJ(dib.0));
-                self.dib_bitmap = dib;
-            }
+            let Ok(new_dib) = new_dib else {
+                return;
+            };
+
+            // 新DIB作成成功 → 旧DIBを解放して差し替え
+            self.width = width;
+            self.height = height;
+            SelectObject(self.mem_dc, self.old_bitmap);
+            let _ = DeleteObject(self.dib_bitmap);
+            self.old_bitmap = SelectObject(self.mem_dc, HGDIOBJ(new_dib.0));
+            self.dib_bitmap = new_dib;
 
             let _ = SetWindowPos(
                 self.hwnd,

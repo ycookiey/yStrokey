@@ -39,7 +39,10 @@ impl ClipboardListener {
                 let handle = GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?;
                 let hglobal = HGLOBAL(handle.0);
                 let size = GlobalSize(hglobal);
-                let max_u16_len = if size > 0 { size / 2 } else { usize::MAX };
+                if size == 0 {
+                    return None;
+                }
+                let max_u16_len = size / 2;
                 let ptr = GlobalLock(hglobal) as *const u16;
                 if ptr.is_null() {
                     return None;
