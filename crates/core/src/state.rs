@@ -17,6 +17,14 @@ pub struct DisplayState {
     next_id: u64,
     /// 単一セルモードでのDown/Up対応付け
     active_presses: HashMap<PressKey, PressTarget>,
+    /// IME変換中文字列がアクティブか
+    ime_composing: bool,
+    /// OSのIME APIから取得したネイティブ変換中表示か
+    ime_native_composing: bool,
+    /// IME ON/OFF のフォールバック状態
+    ime_fallback_enabled: bool,
+    /// IMEフォールバック用のローマ字バッファ
+    ime_fallback_romaji: String,
 }
 
 /// 表示アイテム（OSD上の1つの表示要素）
@@ -162,6 +170,10 @@ impl DisplayState {
             config: config.clone(),
             next_id: 0,
             active_presses: HashMap::new(),
+            ime_composing: false,
+            ime_native_composing: false,
+            ime_fallback_enabled: false,
+            ime_fallback_romaji: String::new(),
         }
     }
 
@@ -180,6 +192,21 @@ impl DisplayState {
         // Key filter: skip ignored keys (case-insensitive, always use full label)
         let full_label = ke.key.label();
         if self.config.behavior.ignored_keys.iter().any(|k| k.eq_ignore_ascii_case(full_label)) {
+            return;
+        }
+
+        // IME切替キーは常に捕捉（"?"表示を防ぐ）
+        if self.handle_ime_toggle_key(&ke) {
+            return;
+        }
+
+        // IMEフォールバック入力（Composition取得失敗時の救済）
+        if self.handle_ime_fallback_key(&ke) {
+            return;
+        }
+
+        // IME変換中はローマ字入力キーを抑制し、Composition表示を優先する
+        if self.ime_composing && should_suppress_during_ime_composition(&ke) {
             return;
         }
 
@@ -310,8 +337,25 @@ impl DisplayState {
         }
 
         match ie.kind {
-            ImeEventKind::StateChanged { .. } => {}
+            ImeEventKind::StateChanged { enabled } => {
+                if !enabled {
+                    // IME OFF時のみフォールバックを明示的に停止する。
+                    // ON側は半角/全角キーでのローカル判定を優先し、
+                    // 誤検知時に日本語化し続ける問題を避ける。
+                    self.ime_fallback_enabled = false;
+                    self.ime_composing = false;
+                    self.ime_native_composing = false;
+                    self.ime_fallback_romaji.clear();
+                    self.items.retain(|item| {
+                        !matches!(item.kind, DisplayItemKind::ImeComposition { .. })
+                    });
+                    self.prune_active_press_targets();
+                }
+            }
             ImeEventKind::CompositionUpdate { text } => {
+                self.ime_composing = true;
+                self.ime_native_composing = true;
+                self.ime_fallback_romaji.clear();
                 // 既存のIMEアイテムを更新、なければ追加
                 let updated = self.items.iter_mut().any(|item| {
                     if let DisplayItemKind::ImeComposition { text: ref mut t } = item.kind {
@@ -328,10 +372,21 @@ impl DisplayState {
                 }
             }
             ImeEventKind::CompositionEnd { .. } => {
-                // IMEアイテムを除去
-                self.items
-                    .retain(|item| !matches!(item.kind, DisplayItemKind::ImeComposition { .. }));
-                self.prune_active_press_targets();
+                // ネイティブIME由来の変換終了のみ確定的に終了扱いにする。
+                // フォールバック入力中に空文字イベントが届いてもバッファを壊さない。
+                if self.ime_native_composing {
+                    self.ime_composing = false;
+                    self.ime_native_composing = false;
+                    self.ime_fallback_romaji.clear();
+                    self.items
+                        .retain(|item| !matches!(item.kind, DisplayItemKind::ImeComposition { .. }));
+                    self.prune_active_press_targets();
+                } else if !self.ime_fallback_enabled {
+                    self.ime_composing = false;
+                    self.items
+                        .retain(|item| !matches!(item.kind, DisplayItemKind::ImeComposition { .. }));
+                    self.prune_active_press_targets();
+                }
             }
         }
     }
@@ -421,6 +476,9 @@ impl DisplayState {
     pub fn clear(&mut self) {
         self.items.clear();
         self.active_presses.clear();
+        self.ime_composing = false;
+        self.ime_native_composing = false;
+        self.ime_fallback_romaji.clear();
     }
 
     pub fn has_animations(&self) -> bool {
@@ -667,6 +725,123 @@ impl DisplayState {
         item.opacity = 1.0;
         item.phase = DisplayPhase::Active;
     }
+
+    fn handle_ime_toggle_key(&mut self, ke: &KeyEvent) -> bool {
+        const VK_KANA: u32 = 0x15;
+        const VK_IME_ON: u32 = 0x16;
+        const VK_KANJI: u32 = 0x19;
+        const VK_IME_OFF: u32 = 0x1A;
+        const VK_OEM_3: u32 = 0xC0;
+
+        let vk = ke.key.0 & 0xFF;
+        // 日本語キーボードの半角/全角は環境により VK が異なるため scan_code を最優先。
+        let is_hankaku_zenkaku = ke.scan_code == 0x29 || (vk == VK_OEM_3 && ke.scan_code == 0x29);
+
+        if !matches!(vk, VK_KANA | VK_IME_ON | VK_KANJI | VK_IME_OFF) && !is_hankaku_zenkaku {
+            return false;
+        }
+
+        if ke.action == KeyAction::Down {
+            match vk {
+                VK_IME_ON => self.ime_fallback_enabled = true,
+                VK_IME_OFF => self.ime_fallback_enabled = false,
+                VK_KANA | VK_KANJI => self.ime_fallback_enabled = !self.ime_fallback_enabled,
+                VK_OEM_3 if is_hankaku_zenkaku => {
+                    self.ime_fallback_enabled = !self.ime_fallback_enabled
+                }
+                _ if is_hankaku_zenkaku => {
+                    self.ime_fallback_enabled = !self.ime_fallback_enabled
+                }
+                _ => {}
+            }
+
+            if !self.ime_fallback_enabled {
+                self.ime_composing = false;
+                self.ime_native_composing = false;
+                self.ime_fallback_romaji.clear();
+                self.items.retain(|item| {
+                    !matches!(item.kind, DisplayItemKind::ImeComposition { .. })
+                });
+                self.prune_active_press_targets();
+            }
+        }
+
+        true
+    }
+
+    fn handle_ime_fallback_key(&mut self, ke: &KeyEvent) -> bool {
+        if !self.config.behavior.show_ime_composition
+            || !self.ime_fallback_enabled
+            || self.ime_native_composing
+            || ke.modifiers.ctrl
+            || ke.modifiers.alt
+            || ke.modifiers.win
+        {
+            return false;
+        }
+
+        let vk = ke.key.0 & 0xFF;
+        let is_letter = (0x41..=0x5A).contains(&vk);
+        let is_control_key = matches!(vk, 0x08 | 0x0D | 0x1B | 0x09 | 0x20); // BS/Enter/Esc/Tab/Space
+
+        if ke.action == KeyAction::Up {
+            return is_letter || is_control_key;
+        }
+
+        if is_letter {
+            let c = (vk as u8 as char).to_ascii_lowercase();
+            self.ime_fallback_romaji.push(c);
+            self.apply_ime_fallback_text(ke.timestamp);
+            return true;
+        }
+
+        if vk == 0x08 {
+            let _ = self.ime_fallback_romaji.pop();
+            self.apply_ime_fallback_text(ke.timestamp);
+            return true;
+        }
+
+        if matches!(vk, 0x0D | 0x1B | 0x09 | 0x20) {
+            self.ime_fallback_romaji.clear();
+            self.ime_composing = false;
+            self.items
+                .retain(|item| !matches!(item.kind, DisplayItemKind::ImeComposition { .. }));
+            self.prune_active_press_targets();
+            return true;
+        }
+
+        false
+    }
+
+    fn apply_ime_fallback_text(&mut self, now: Instant) {
+        let text = romaji_to_hiragana(&self.ime_fallback_romaji);
+        if text.is_empty() {
+            self.ime_composing = false;
+            self.ime_native_composing = false;
+            self.items
+                .retain(|item| !matches!(item.kind, DisplayItemKind::ImeComposition { .. }));
+            self.prune_active_press_targets();
+            return;
+        }
+
+        self.ime_composing = true;
+        self.ime_native_composing = false;
+        let updated = self.items.iter_mut().any(|item| {
+            if let DisplayItemKind::ImeComposition { text: ref mut t } = item.kind {
+                *t = text.clone();
+                item.phase = DisplayPhase::Active;
+                item.opacity = 1.0;
+                item.created_at = now;
+                true
+            } else {
+                false
+            }
+        });
+
+        if !updated {
+            let _ = self.add_item(DisplayItemKind::ImeComposition { text }, now);
+        }
+    }
 }
 
 /// ショートカット定義文字列がキーイベントにマッチするか判定
@@ -705,4 +880,238 @@ fn shortcut_matches(keys_str: &str, ke: &KeyEvent) -> bool {
     };
 
     ke.key.label() == expected_key
+}
+
+fn should_suppress_during_ime_composition(ke: &KeyEvent) -> bool {
+    if ke.modifiers.ctrl || ke.modifiers.alt || ke.modifiers.win {
+        return false;
+    }
+
+    // VKの下位1byteを使用（拡張値は除外）
+    let vk = ke.key.0 & 0xFF;
+    (0x30..=0x5A).contains(&vk) || (0xBA..=0xE2).contains(&vk)
+}
+
+fn romaji_to_hiragana(romaji: &str) -> String {
+    let s: String = romaji
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+
+    let bytes = s.as_bytes();
+    let mut out = String::new();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        // 促音（小さい「っ」）: 子音重複（nn除く）
+        if i + 1 < bytes.len()
+            && bytes[i] == bytes[i + 1]
+            && is_romaji_consonant(bytes[i] as char)
+            && bytes[i] != b'n'
+        {
+            out.push('っ');
+            i += 1;
+            continue;
+        }
+
+        // 「ん」処理
+        if bytes[i] == b'n' {
+            if i + 1 == bytes.len() {
+                break; // 末尾nは確定待ち
+            }
+            let next = bytes[i + 1] as char;
+            if next == 'n' {
+                out.push('ん');
+                i += 1;
+                continue;
+            }
+            if !is_romaji_vowel(next) && next != 'y' {
+                out.push('ん');
+                i += 1;
+                continue;
+            }
+        }
+
+        if i + 3 <= bytes.len() {
+            let chunk = &s[i..i + 3];
+            if let Some(kana) = romaji_map_3(chunk) {
+                out.push_str(kana);
+                i += 3;
+                continue;
+            }
+        }
+
+        if i + 2 <= bytes.len() {
+            let chunk = &s[i..i + 2];
+            if let Some(kana) = romaji_map_2(chunk) {
+                out.push_str(kana);
+                i += 2;
+                continue;
+            }
+        }
+
+        if i + 1 <= bytes.len() {
+            let chunk = &s[i..i + 1];
+            if let Some(kana) = romaji_map_1(chunk) {
+                out.push_str(kana);
+                i += 1;
+                continue;
+            }
+        }
+
+        // 末尾の未確定1文字は待機し、それ以外の未知綴りは素通しで継続。
+        // 例: "nihogngo" -> "にほgんご"
+        if i + 1 >= bytes.len() {
+            break;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+
+    out
+}
+
+fn is_romaji_vowel(c: char) -> bool {
+    matches!(c, 'a' | 'i' | 'u' | 'e' | 'o')
+}
+
+fn is_romaji_consonant(c: char) -> bool {
+    c.is_ascii_alphabetic() && !is_romaji_vowel(c)
+}
+
+fn romaji_map_3(s: &str) -> Option<&'static str> {
+    let v = match s {
+        "kya" => "きゃ",
+        "kyu" => "きゅ",
+        "kyo" => "きょ",
+        "gya" => "ぎゃ",
+        "gyu" => "ぎゅ",
+        "gyo" => "ぎょ",
+        "sha" | "sya" => "しゃ",
+        "shu" | "syu" => "しゅ",
+        "sho" | "syo" => "しょ",
+        "cha" | "tya" | "cya" => "ちゃ",
+        "chu" | "tyu" | "cyu" => "ちゅ",
+        "cho" | "tyo" | "cyo" => "ちょ",
+        "nya" => "にゃ",
+        "nyu" => "にゅ",
+        "nyo" => "にょ",
+        "hya" => "ひゃ",
+        "hyu" => "ひゅ",
+        "hyo" => "ひょ",
+        "mya" => "みゃ",
+        "myu" => "みゅ",
+        "myo" => "みょ",
+        "rya" => "りゃ",
+        "ryu" => "りゅ",
+        "ryo" => "りょ",
+        "bya" => "びゃ",
+        "byu" => "びゅ",
+        "byo" => "びょ",
+        "pya" => "ぴゃ",
+        "pyu" => "ぴゅ",
+        "pyo" => "ぴょ",
+        "ja" | "jya" | "zya" => "じゃ",
+        "ju" | "jyu" | "zyu" => "じゅ",
+        "jo" | "jyo" | "zyo" => "じょ",
+        "shi" => "し",
+        "chi" => "ち",
+        "tsu" => "つ",
+        "dya" => "ぢゃ",
+        "dyu" => "ぢゅ",
+        "dyo" => "ぢょ",
+        _ => return None,
+    };
+    Some(v)
+}
+
+fn romaji_map_2(s: &str) -> Option<&'static str> {
+    let v = match s {
+        "ka" => "か",
+        "ki" => "き",
+        "ku" => "く",
+        "ke" => "け",
+        "ko" => "こ",
+        "ga" => "が",
+        "gi" => "ぎ",
+        "gu" => "ぐ",
+        "ge" => "げ",
+        "go" => "ご",
+        "sa" => "さ",
+        "su" => "す",
+        "se" => "せ",
+        "so" => "そ",
+        "za" => "ざ",
+        "ji" => "じ",
+        "zu" => "ず",
+        "ze" => "ぜ",
+        "zo" => "ぞ",
+        "ta" => "た",
+        "te" => "て",
+        "to" => "と",
+        "da" => "だ",
+        "di" => "ぢ",
+        "du" => "づ",
+        "de" => "で",
+        "do" => "ど",
+        "na" => "な",
+        "ni" => "に",
+        "nu" => "ぬ",
+        "ne" => "ね",
+        "no" => "の",
+        "ha" => "は",
+        "hi" => "ひ",
+        "fu" => "ふ",
+        "he" => "へ",
+        "ho" => "ほ",
+        "ba" => "ば",
+        "bi" => "び",
+        "bu" => "ぶ",
+        "be" => "べ",
+        "bo" => "ぼ",
+        "pa" => "ぱ",
+        "pi" => "ぴ",
+        "pu" => "ぷ",
+        "pe" => "ぺ",
+        "po" => "ぽ",
+        "ma" => "ま",
+        "mi" => "み",
+        "mu" => "む",
+        "me" => "め",
+        "mo" => "も",
+        "ya" => "や",
+        "yu" => "ゆ",
+        "yo" => "よ",
+        "ra" => "ら",
+        "ri" => "り",
+        "ru" => "る",
+        "re" => "れ",
+        "ro" => "ろ",
+        "wa" => "わ",
+        "wo" => "を",
+        "fa" => "ふぁ",
+        "fi" => "ふぃ",
+        "fe" => "ふぇ",
+        "fo" => "ふぉ",
+        "va" => "ゔぁ",
+        "vi" => "ゔぃ",
+        "vu" => "ゔ",
+        "ve" => "ゔぇ",
+        "vo" => "ゔぉ",
+        _ => return None,
+    };
+    Some(v)
+}
+
+fn romaji_map_1(s: &str) -> Option<&'static str> {
+    let v = match s {
+        "a" => "あ",
+        "i" => "い",
+        "u" => "う",
+        "e" => "え",
+        "o" => "お",
+        _ => return None,
+    };
+    Some(v)
 }
