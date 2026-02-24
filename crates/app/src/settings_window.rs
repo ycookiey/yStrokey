@@ -15,12 +15,14 @@ use ystrokey_core::{
 
 struct SettingsState {
     config: AppConfig,
+    draft_config: AppConfig,
     config_path: std::path::PathBuf,
     notify_tx: Option<SyncSender<InputEvent>>,
     category: Category,
     nav: HWND,
     status: HWND,
     dynamic_controls: Vec<HWND>,
+    rebuilding: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -122,6 +124,66 @@ const ID_ANIM_GHOST_THRESHOLD: u16 = 1901;
 const ID_ANIM_GHOST_MAX_OPACITY: u16 = 1902;
 const ID_ANIM_FADE_CURVE: u16 = 1903;
 
+fn should_request_preview(changed_control_id: u16) -> bool {
+    matches!(
+        changed_control_id,
+        // Display
+        ID_DISPLAY_POSITION
+            | ID_DISPLAY_OFFSET_X
+            | ID_DISPLAY_OFFSET_Y
+            | ID_DISPLAY_MAX_ITEMS
+            | ID_DISPLAY_DURATION
+            | ID_DISPLAY_FADE
+            // Style
+            | ID_STYLE_FONT_FAMILY
+            | ID_STYLE_FONT_SIZE
+            | ID_STYLE_TEXT_COLOR
+            | ID_STYLE_BACKGROUND_COLOR
+            | ID_STYLE_BORDER_RADIUS
+            | ID_STYLE_PADDING
+            | ID_STYLE_SHORTCUT_COLOR
+            | ID_STYLE_KEY_DOWN_COLOR
+            | ID_STYLE_OPACITY
+            // Behavior (display affects)
+            | ID_BEHAVIOR_KEY_TRANSITION_MODE
+            | ID_BEHAVIOR_SHOW_REPEAT_COUNT
+            | ID_BEHAVIOR_DISTINGUISH_NUMPAD
+            | ID_BEHAVIOR_SHOW_IME
+            | ID_BEHAVIOR_SHOW_CLIPBOARD
+            | ID_BEHAVIOR_CLIPBOARD_MAX_CHARS
+            | ID_BEHAVIOR_SHOW_LOCK
+            // Performance (OSD size)
+            | ID_PERF_OSD_WIDTH
+            | ID_PERF_OSD_HEIGHT
+            // Animation (visual)
+            | ID_ANIM_GHOST_MODIFIER
+            | ID_ANIM_GHOST_THRESHOLD
+            | ID_ANIM_GHOST_MAX_OPACITY
+            | ID_ANIM_FADE_CURVE
+    )
+}
+
+fn should_live_preview_on_change(changed_control_id: u16) -> bool {
+    matches!(
+        changed_control_id,
+        // Display (positioning)
+        ID_DISPLAY_OFFSET_X | ID_DISPLAY_OFFSET_Y
+        // Style (most visual edits are safe to reflect immediately)
+        | ID_STYLE_FONT_FAMILY
+            | ID_STYLE_FONT_SIZE
+            | ID_STYLE_TEXT_COLOR
+            | ID_STYLE_BACKGROUND_COLOR
+            | ID_STYLE_BORDER_RADIUS
+            | ID_STYLE_PADDING
+            | ID_STYLE_SHORTCUT_COLOR
+            | ID_STYLE_KEY_DOWN_COLOR
+            | ID_STYLE_OPACITY
+        // Animation (visual)
+        | ID_ANIM_GHOST_THRESHOLD
+            | ID_ANIM_GHOST_MAX_OPACITY
+    )
+}
+
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -152,8 +214,12 @@ unsafe extern "system" fn settings_wnd_proc(
                     match AppConfig::load_strict(&state.config_path) {
                         Ok(cfg) => {
                             state.config = cfg;
+                            state.draft_config = state.config.clone();
                             rebuild_category(hwnd, state);
                             set_status(state, "Reverted this section.");
+                            if let Some(tx) = &state.notify_tx {
+                                let _ = tx.try_send(InputEvent::ConfigChanged);
+                            }
                         }
                         Err(e) => set_status(state, &format!("Reload failed: {e}")),
                     }
@@ -171,6 +237,7 @@ unsafe extern "system" fn settings_wnd_proc(
                         match persist_and_notify(state, &mut cfg) {
                             Ok(()) => {
                                 state.config = cfg;
+                                state.draft_config = state.config.clone();
                                 rebuild_category(hwnd, state);
                                 set_status(state, "Reset to defaults.");
                             }
@@ -188,6 +255,21 @@ unsafe extern "system" fn settings_wnd_proc(
                 _ => {}
             }
 
+            if notify == EN_CHANGE as u16 {
+                if !state.rebuilding && should_live_preview_on_change(cmd_id) {
+                    let mut draft = state.draft_config.clone();
+                    if apply_control_to_config(hwnd, cmd_id, &mut draft).is_ok() {
+                        state.draft_config = draft;
+                        if let Some(tx) = &state.notify_tx {
+                            let _ = tx.try_send(InputEvent::PreviewConfig {
+                                config: state.draft_config.clone(),
+                            });
+                        }
+                    }
+                }
+                return LRESULT(0);
+            }
+
             let should_apply = notify == EN_KILLFOCUS as u16
                 || notify == BN_CLICKED as u16
                 || notify == CBN_SELCHANGE as u16;
@@ -198,7 +280,15 @@ unsafe extern "system" fn settings_wnd_proc(
                     Ok(()) => match persist_and_notify(state, &mut new_cfg) {
                         Ok(()) => {
                             state.config = new_cfg;
+                            state.draft_config = state.config.clone();
                             set_status(state, "Saved.");
+                            if should_request_preview(cmd_id) {
+                                if let Some(tx) = &state.notify_tx {
+                                    let _ = tx.try_send(InputEvent::PreviewConfig {
+                                        config: state.draft_config.clone(),
+                                    });
+                                }
+                            }
                         }
                         Err(e) => {
                             set_status(state, &format!("Save failed: {e}"));
@@ -217,6 +307,11 @@ unsafe extern "system" fn settings_wnd_proc(
         WM_DESTROY => {
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut SettingsState;
             if !ptr.is_null() {
+                // Disable preview mode when the settings window is closed.
+                let state = &mut *ptr;
+                if let Some(tx) = &state.notify_tx {
+                    let _ = tx.try_send(InputEvent::PreviewMode { enabled: false });
+                }
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
                 drop(Box::from_raw(ptr));
             }
@@ -244,6 +339,9 @@ unsafe fn set_status(state: &SettingsState, msg: &str) {
     let _ = SetWindowTextW(state.status, windows::core::PCWSTR(w.as_ptr()));
 }
 unsafe fn rebuild_category(hwnd: HWND, state: &mut SettingsState) {
+    state.rebuilding = true;
+    state.draft_config = state.config.clone();
+
     for ctrl in state.dynamic_controls.drain(..) {
         let _ = DestroyWindow(ctrl);
     }
@@ -398,6 +496,14 @@ unsafe fn rebuild_category(hwnd: HWND, state: &mut SettingsState) {
                 &mut y,
             );
         }
+    }
+
+    state.rebuilding = false;
+
+    if let Some(tx) = &state.notify_tx {
+        let _ = tx.try_send(InputEvent::PreviewConfig {
+            config: state.draft_config.clone(),
+        });
     }
 }
 
@@ -939,13 +1045,20 @@ pub fn open_settings_window(
 
         let mut state = Box::new(SettingsState {
             config: config.clone(),
+            draft_config: config.clone(),
             config_path: config_path.to_path_buf(),
             notify_tx,
             category: Category::General,
             nav,
             status,
             dynamic_controls: Vec::new(),
+            rebuilding: false,
         });
+
+        // While settings are open, keep preview visible regardless of OSD enabled/privacy state.
+        if let Some(tx) = &state.notify_tx {
+            let _ = tx.try_send(InputEvent::PreviewMode { enabled: true });
+        }
 
         rebuild_category(hwnd, &mut state);
 

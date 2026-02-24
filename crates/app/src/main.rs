@@ -293,18 +293,21 @@ fn main() {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let mut config = load_config_with_recovery(&config_path);
+    let mut saved_config = load_config_with_recovery(&config_path);
+    let mut effective_config = saved_config.clone();
+    let mut preview_mode_active = false;
+    let mut preview_draft_config: Option<AppConfig> = None;
 
-    logger::init(&base_dir, &config.diagnostics);
+    logger::init(&base_dir, &saved_config.diagnostics);
     logger::log(DiagnosticsLevel::Info, "Application startup");
 
     let _ = CONFIG_PATH.set(config_path.clone());
-    let _ = CURRENT_CONFIG.set(Mutex::new(config.clone()));
+    let _ = CURRENT_CONFIG.set(Mutex::new(saved_config.clone()));
 
     let mut window = OsdWindow::create(
-        config.performance.osd_width,
-        config.performance.osd_height,
-        &config.display,
+        saved_config.performance.osd_width,
+        saved_config.performance.osd_height,
+        &saved_config.display,
     )
     .unwrap_or_else(|e| fatal_error(&format!("OSD window creation failed: {e}")));
 
@@ -312,20 +315,20 @@ fn main() {
         SetWindowLongPtrW(window.hwnd(), GWL_WNDPROC, app_wnd_proc as usize as isize);
     }
 
-    let mut renderer = D2DRenderer::new(&config.style)
+    let mut renderer = D2DRenderer::new(&saved_config.style)
         .unwrap_or_else(|e| fatal_error(&format!("D2D renderer creation failed: {e}")));
     renderer.update_dpi(window.dpi);
 
-    let mut state = DisplayState::new(&config);
+    let mut state = DisplayState::new(&saved_config);
     let mut intervals = RuntimeIntervals {
-        frame_duration: Duration::from_millis(config.performance.frame_interval_ms),
-        ime_poll_interval: Duration::from_millis(config.performance.ime_poll_interval_ms),
-        config_reload_interval: Duration::from_millis(config.performance.config_reload_interval_ms),
+        frame_duration: Duration::from_millis(saved_config.performance.frame_interval_ms),
+        ime_poll_interval: Duration::from_millis(saved_config.performance.ime_poll_interval_ms),
+        config_reload_interval: Duration::from_millis(saved_config.performance.config_reload_interval_ms),
     };
 
     apply_config(
         ApplyReason::Startup,
-        &config,
+        &saved_config,
         &mut state,
         &mut renderer,
         &mut window,
@@ -368,7 +371,7 @@ fn main() {
 
         let enabled = OSD_ENABLED.load(Ordering::Relaxed);
         while let Ok(event) = rx.try_recv() {
-            match &event {
+            match event {
                 InputEvent::DpiChanged { dpi, suggested_rect } => {
                     let rect = RECT {
                         left: suggested_rect[0],
@@ -376,8 +379,8 @@ fn main() {
                         right: suggested_rect[2],
                         bottom: suggested_rect[3],
                     };
-                    window.update_for_dpi(*dpi, &rect);
-                    renderer.update_dpi(*dpi);
+                    window.update_for_dpi(dpi, &rect);
+                    renderer.update_dpi(dpi);
                     continue;
                 }
                 InputEvent::ConfigChanged => {
@@ -397,7 +400,24 @@ fn main() {
                                         *cfg = new_config.clone();
                                     }
                                 }
-                                config = new_config;
+                                saved_config = new_config;
+
+                                if preview_mode_active {
+                                    if let Some(draft) = preview_draft_config.as_ref() {
+                                        effective_config =
+                                            merge_preview_config(&saved_config, draft);
+                                        apply_visual_config(
+                                            &effective_config,
+                                            &mut state,
+                                            &mut renderer,
+                                            &mut window,
+                                        );
+                                    } else {
+                                        effective_config = saved_config.clone();
+                                    }
+                                } else {
+                                    effective_config = saved_config.clone();
+                                }
                             }
                             Err(e) => logger::log(
                                 DiagnosticsLevel::Warn,
@@ -407,10 +427,45 @@ fn main() {
                     }
                     continue;
                 }
-                _ => {}
-            }
-            if enabled && !privacy_active {
-                state.process_event(event);
+                InputEvent::PreviewMode { enabled } => {
+                    preview_mode_active = enabled;
+                    if enabled {
+                        state.set_preview_active(true, Instant::now());
+                    } else {
+                        preview_draft_config = None;
+                        state.set_preview_active(false, Instant::now());
+                        effective_config = saved_config.clone();
+                        apply_config(
+                            ApplyReason::UiEdit,
+                            &saved_config,
+                            &mut state,
+                            &mut renderer,
+                            &mut window,
+                            &mut intervals,
+                        );
+                    }
+                    continue;
+                }
+                InputEvent::PreviewConfig { config } => {
+                    if preview_mode_active {
+                        preview_draft_config = Some(config);
+                        if let Some(draft) = preview_draft_config.as_ref() {
+                            effective_config = merge_preview_config(&saved_config, draft);
+                            apply_visual_config(
+                                &effective_config,
+                                &mut state,
+                                &mut renderer,
+                                &mut window,
+                            );
+                        }
+                    }
+                    continue;
+                }
+                other => {
+                    if enabled && !privacy_active {
+                        state.process_event(other);
+                    }
+                }
             }
         }
 
@@ -420,12 +475,12 @@ fn main() {
             if fg != last_foreground_hwnd {
                 last_foreground_hwnd = fg;
                 let prev_privacy = privacy_active;
-                privacy_active = is_privacy_target(&config.privacy);
+                privacy_active = is_privacy_target(&saved_config.privacy);
                 if privacy_active && !prev_privacy {
                     state.clear();
                 }
                 if !fg.0.is_null() {
-                    window.reposition_to_monitor(fg, &config.display);
+                    window.reposition_to_monitor(fg, &effective_config.display);
                 }
             }
             if enabled && !privacy_active {
@@ -435,7 +490,7 @@ fn main() {
         }
 
         if now.duration_since(last_config_check) >= intervals.config_reload_interval {
-            match config.check_reload(&config_path) {
+            match saved_config.check_reload(&config_path) {
                 Ok(Some(new_config)) => {
                     apply_config(
                         ApplyReason::HotReload,
@@ -450,7 +505,23 @@ fn main() {
                             *cfg = new_config.clone();
                         }
                     }
-                    config = new_config;
+                    saved_config = new_config;
+
+                    if preview_mode_active {
+                        if let Some(draft) = preview_draft_config.as_ref() {
+                            effective_config = merge_preview_config(&saved_config, draft);
+                            apply_visual_config(
+                                &effective_config,
+                                &mut state,
+                                &mut renderer,
+                                &mut window,
+                            );
+                        } else {
+                            effective_config = saved_config.clone();
+                        }
+                    } else {
+                        effective_config = saved_config.clone();
+                    }
                 }
                 Ok(None) => {}
                 Err(e) => logger::log(
@@ -464,31 +535,41 @@ fn main() {
         state.tick(Instant::now());
 
         let has_items = !state.active_items().is_empty();
+        let has_any = has_items || state.preview_active();
 
-        if has_items || was_rendering {
-            let items = state.active_items();
-            let ghost_opacity = calculate_ghost_opacity(&window, &config);
+        if has_any || was_rendering {
+            let live_items = state.active_items();
+            let preview_items = state.preview_items();
+            let ghost_opacity = calculate_ghost_opacity(&window, &effective_config);
             let interactive = ghost_opacity > 0.0 && is_cursor_in_rect(&window.get_rect());
             GHOST_INTERACTIVE.store(interactive, Ordering::Relaxed);
             window.set_interactive(interactive);
 
             if let Err(e) = renderer.render(
-                items,
-                &config.style,
+                live_items,
+                preview_items,
+                &effective_config.style,
                 window.mem_dc(),
                 window.width() as u32,
                 window.height() as u32,
                 ghost_opacity,
             ) {
                 logger::log(DiagnosticsLevel::Warn, &format!("Render error: {e}"));
-                if let Ok(new_renderer) = D2DRenderer::new(&config.style) {
+                if let Ok(new_renderer) = D2DRenderer::new(&effective_config.style) {
                     renderer = new_renderer;
                     renderer.update_dpi(window.dpi);
                 }
             }
-            window.present(config.style.opacity);
+            // While settings preview is active, keep the window slightly visible so the user
+            // can recover even if they temporarily set opacity to 0.
+            let present_opacity = if state.preview_active() {
+                effective_config.style.opacity.max(0.05)
+            } else {
+                effective_config.style.opacity
+            };
+            window.present(present_opacity);
 
-            was_rendering = has_items;
+            was_rendering = has_any;
             std::thread::sleep(intervals.frame_duration);
         } else {
             unsafe {
@@ -506,13 +587,7 @@ fn apply_config(
     window: &mut OsdWindow,
     intervals: &mut RuntimeIntervals,
 ) {
-    state.update_config(config);
-    renderer.update_style(&config.style);
-    window.set_display_affinity(config.behavior.exclude_from_capture);
-
-    if window.width() != config.performance.osd_width || window.height() != config.performance.osd_height {
-        window.resize(config.performance.osd_width, config.performance.osd_height);
-    }
+    apply_visual_config(config, state, renderer, window);
 
     intervals.frame_duration = Duration::from_millis(config.performance.frame_interval_ms);
     intervals.ime_poll_interval = Duration::from_millis(config.performance.ime_poll_interval_ms);
@@ -536,6 +611,63 @@ fn apply_config(
     if matches!(reason, ApplyReason::Startup) {
         OSD_ENABLED.store(config.tray.start_osd_enabled, Ordering::Relaxed);
     }
+}
+
+fn apply_visual_config(
+    config: &AppConfig,
+    state: &mut DisplayState,
+    renderer: &mut D2DRenderer,
+    window: &mut OsdWindow,
+) {
+    state.update_config(config);
+    renderer.update_style(&config.style);
+    window.set_display_affinity(config.behavior.exclude_from_capture);
+
+    if window.width() != config.performance.osd_width || window.height() != config.performance.osd_height {
+        window.resize(config.performance.osd_width, config.performance.osd_height);
+    }
+
+    // Display settings should apply immediately (e.g. while tweaking in Settings).
+    unsafe {
+        let fg = GetForegroundWindow();
+        if !fg.0.is_null() {
+            window.reposition_to_monitor(fg, &config.display);
+        }
+    }
+}
+
+fn merge_preview_config(base: &AppConfig, draft: &AppConfig) -> AppConfig {
+    // Keep non-visual/runtime fields from `base` to avoid overriding them with stale draft values.
+    let mut cfg = base.clone();
+
+    // Display (keep per-monitor saved positions from base).
+    cfg.display.position = draft.display.position;
+    cfg.display.offset_x = draft.display.offset_x;
+    cfg.display.offset_y = draft.display.offset_y;
+    cfg.display.max_items = draft.display.max_items;
+    cfg.display.display_duration_ms = draft.display.display_duration_ms;
+    cfg.display.fade_duration_ms = draft.display.fade_duration_ms;
+
+    // Style (all visual).
+    cfg.style = draft.style.clone();
+
+    // Behavior (display-affecting subset).
+    cfg.behavior.key_transition_mode = draft.behavior.key_transition_mode;
+    cfg.behavior.show_repeat_count = draft.behavior.show_repeat_count;
+    cfg.behavior.distinguish_numpad = draft.behavior.distinguish_numpad;
+    cfg.behavior.show_ime_composition = draft.behavior.show_ime_composition;
+    cfg.behavior.show_clipboard = draft.behavior.show_clipboard;
+    cfg.behavior.clipboard_max_chars = draft.behavior.clipboard_max_chars;
+    cfg.behavior.show_lock_indicators = draft.behavior.show_lock_indicators;
+
+    // Performance (OSD size).
+    cfg.performance.osd_width = draft.performance.osd_width;
+    cfg.performance.osd_height = draft.performance.osd_height;
+
+    // Animation (visual).
+    cfg.animation = draft.animation.clone();
+
+    cfg
 }
 
 fn load_config_with_recovery(config_path: &Path) -> AppConfig {

@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use crate::config::AppConfig;
 use crate::key::KeyCode;
 
 /// 全入力イベントの統合型
@@ -10,6 +11,10 @@ pub enum InputEvent {
     Ime(ImeEvent),
     Clipboard(ClipboardEvent),
     LockState(LockStateEvent),
+    /// 設定UI表示中などの「プレビューモード」切替
+    PreviewMode { enabled: bool },
+    /// 設定UI側のドラフト設定を反映するためのプレビュー用設定更新
+    PreviewConfig { config: AppConfig },
     /// DPI変更通知 (モニタ移動等)
     DpiChanged {
         dpi: u32,
