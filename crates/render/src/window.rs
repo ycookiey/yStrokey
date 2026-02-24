@@ -240,22 +240,31 @@ impl OsdWindow {
                     .unwrap_or(name_slice.len());
                 let device_name = String::from_utf16_lossy(&name_slice[..len]);
 
-                if let Some(&[x, y]) = display_config.monitor_positions.get(&device_name) {
+                let work = mi.monitorInfo.rcWork;
+                let (x, y) = if let Some(&[x, y]) = display_config.monitor_positions.get(&device_name) {
                     // 保存済み位置を使用
-                    self.set_position(x, y);
+                    (x, y)
                 } else {
                     // 設定ベースの位置計算
-                    let work = mi.monitorInfo.rcWork;
-                    let (x, y) = compute_position(
+                    compute_position(
                         &display_config.position,
                         &work,
                         self.width,
                         self.height,
                         display_config.offset_x,
                         display_config.offset_y,
-                    );
-                    self.set_position(x, y);
-                }
+                    )
+                };
+
+                // Keep the OSD window within the monitor work area so it can't "disappear"
+                // due to stale saved positions or extreme offsets.
+                let min_x = work.left;
+                let max_x = (work.right - self.width).max(min_x);
+                let min_y = work.top;
+                let max_y = (work.bottom - self.height).max(min_y);
+                let x = x.clamp(min_x, max_x);
+                let y = y.clamp(min_y, max_y);
+                self.set_position(x, y);
             }
         }
     }
