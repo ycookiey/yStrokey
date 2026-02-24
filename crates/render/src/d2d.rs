@@ -313,7 +313,8 @@ impl D2DRenderer {
 
     pub fn render(
         &self,
-        items: &[DisplayItem],
+        live_items: &[DisplayItem],
+        preview_items: &[DisplayItem],
         style: &StyleConfig,
         hdc: HDC,
         width: u32,
@@ -343,79 +344,25 @@ impl D2DRenderer {
             }));
 
             // Ghost背景（アイテム描画の前）
-            self.render_ghost_background(items, style, ghost_opacity);
+            self.render_ghost_background(live_items, style, ghost_opacity);
 
             let s = self.dpi_scale;
             let line_height = (style.font_size + style.padding * 2.0) * s;
             let spacing = 4.0_f32 * s;
             let size = self.render_target.GetSize();
 
-            for (i, item) in items.iter().enumerate() {
+            // Preview items (top-down). Render first so live items stay visually dominant.
+            for (i, item) in preview_items.iter().enumerate() {
+                let top = (i as f32) * (line_height + spacing);
+                let bottom = top + line_height;
+                self.render_item_at(item, top, bottom, size.width, style);
+            }
+
+            // Live items (bottom-up).
+            for (i, item) in live_items.iter().enumerate() {
                 let bottom = size.height - (i as f32) * (line_height + spacing);
                 let top = bottom - line_height;
-
-                let bg_brush = self.select_bg_brush(item);
-                let text_brush = self.select_text_brush(item);
-
-                bg_brush.SetOpacity(item.opacity);
-                text_brush.SetOpacity(item.opacity);
-
-                match &item.kind {
-                    DisplayItemKind::Shortcut {
-                        keys_label,
-                        action_label,
-                    } => {
-                        self.render_shortcut(
-                            keys_label,
-                            action_label,
-                            top,
-                            bottom,
-                            size.width,
-                            style,
-                            item.opacity,
-                        );
-                    }
-                    DisplayItemKind::KeyStrokeGroup { strokes } => {
-                        self.render_keystroke_group(
-                            strokes,
-                            top,
-                            bottom,
-                            size.width,
-                            style,
-                            item.opacity,
-                        );
-                    }
-                    DisplayItemKind::KeyStroke {
-                        repeat_count,
-                        ..
-                    } if *repeat_count > 1 => {
-                        let main_text = format_item_text_no_count(&item.kind);
-                        let count_text = format!(" x{}", repeat_count);
-                        self.render_keystroke_with_count(
-                            &main_text,
-                            &count_text,
-                            top,
-                            bottom,
-                            size.width,
-                            style,
-                            bg_brush,
-                            text_brush,
-                            item.opacity,
-                        );
-                    }
-                    _ => {
-                        let text = format_item_text(&item.kind);
-                        self.render_simple_item(
-                            &text,
-                            top,
-                            bottom,
-                            size.width,
-                            style,
-                            bg_brush,
-                            text_brush,
-                        );
-                    }
-                }
+                self.render_item_at(item, top, bottom, size.width, style);
             }
 
             self.render_target
@@ -424,6 +371,68 @@ impl D2DRenderer {
         }
 
         Ok(())
+    }
+
+    unsafe fn render_item_at(
+        &self,
+        item: &DisplayItem,
+        top: f32,
+        bottom: f32,
+        width: f32,
+        style: &StyleConfig,
+    ) {
+        let bg_brush = self.select_bg_brush(item);
+        let text_brush = self.select_text_brush(item);
+
+        bg_brush.SetOpacity(item.opacity);
+        text_brush.SetOpacity(item.opacity);
+
+        match &item.kind {
+            DisplayItemKind::Shortcut {
+                keys_label,
+                action_label,
+            } => {
+                self.render_shortcut(
+                    keys_label,
+                    action_label,
+                    top,
+                    bottom,
+                    width,
+                    style,
+                    item.opacity,
+                );
+            }
+            DisplayItemKind::KeyStrokeGroup { strokes } => {
+                self.render_keystroke_group(strokes, top, bottom, width, style, item.opacity);
+            }
+            DisplayItemKind::KeyStroke { repeat_count, .. } if *repeat_count > 1 => {
+                let main_text = format_item_text_no_count(&item.kind);
+                let count_text = format!(" x{}", repeat_count);
+                self.render_keystroke_with_count(
+                    &main_text,
+                    &count_text,
+                    top,
+                    bottom,
+                    width,
+                    style,
+                    bg_brush,
+                    text_brush,
+                    item.opacity,
+                );
+            }
+            _ => {
+                let text = format_item_text(&item.kind);
+                self.render_simple_item(
+                    &text,
+                    top,
+                    bottom,
+                    width,
+                    style,
+                    bg_brush,
+                    text_brush,
+                );
+            }
+        }
     }
 
     /// Ghost-mode: アクティブアイテムの背後に半透明背景を描画

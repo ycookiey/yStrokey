@@ -9,6 +9,10 @@ use crate::key::KeyCode;
 pub struct DisplayState {
     /// 現在表示中のOSDアイテム
     items: Vec<DisplayItem>,
+    /// 設定UI表示中のプレビューを表示するか
+    preview_active: bool,
+    /// プレビュー用の固定サンプル表示
+    preview_items: Vec<DisplayItem>,
     /// 連打検出用
     repeat_tracker: RepeatTracker,
     /// 設定
@@ -166,6 +170,8 @@ impl DisplayState {
         let timeout = Duration::from_millis(config.behavior.repeat_timeout_ms);
         Self {
             items: Vec::new(),
+            preview_active: false,
+            preview_items: Vec::new(),
             repeat_tracker: RepeatTracker::new(timeout),
             config: config.clone(),
             next_id: 0,
@@ -184,7 +190,33 @@ impl DisplayState {
             InputEvent::Ime(ie) => self.process_ime_event(ie),
             InputEvent::Clipboard(ce) => self.process_clipboard_event(ce),
             InputEvent::LockState(ls) => self.process_lock_event(ls),
-            InputEvent::DpiChanged { .. } | InputEvent::ConfigChanged => {} // main loopで処理
+            InputEvent::PreviewMode { .. }
+            | InputEvent::PreviewConfig { .. }
+            | InputEvent::DpiChanged { .. }
+            | InputEvent::ConfigChanged => {} // main loopで処理
+        }
+    }
+
+    pub fn preview_active(&self) -> bool {
+        self.preview_active
+    }
+
+    pub fn preview_items(&self) -> &[DisplayItem] {
+        &self.preview_items
+    }
+
+    pub fn set_preview_active(&mut self, enabled: bool, now: Instant) {
+        self.preview_active = enabled;
+        if enabled {
+            self.preview_items = build_preview_items(&self.config, now);
+        } else {
+            self.preview_items.clear();
+        }
+    }
+
+    pub fn rebuild_preview_items(&mut self, now: Instant) {
+        if self.preview_active {
+            self.preview_items = build_preview_items(&self.config, now);
         }
     }
 
@@ -489,12 +521,14 @@ impl DisplayState {
 
     /// 設定を更新（ホットリロード用）
     pub fn update_config(&mut self, config: &AppConfig) {
+        let now = Instant::now();
         if self.config.behavior.key_transition_mode != config.behavior.key_transition_mode {
             self.active_presses.clear();
         }
         self.config = config.clone();
         self.repeat_tracker.timeout = Duration::from_millis(config.behavior.repeat_timeout_ms);
         self.prune_active_press_targets();
+        self.rebuild_preview_items(now);
     }
 
     // --- private helpers ---
@@ -890,6 +924,110 @@ fn should_suppress_during_ime_composition(ke: &KeyEvent) -> bool {
     // VKの下位1byteを使用（拡張値は除外）
     let vk = ke.key.0 & 0xFF;
     (0x30..=0x5A).contains(&vk) || (0xBA..=0xE2).contains(&vk)
+}
+
+fn build_preview_items(config: &AppConfig, now: Instant) -> Vec<DisplayItem> {
+    // Preview items are always "active" and do not fade; they are rendered separately
+    // from live OSD items.
+    let mut items = Vec::new();
+    let mut id = 1u64;
+    let opacity = 0.85;
+
+    let num_label = if config.behavior.distinguish_numpad {
+        "Num7"
+    } else {
+        "7"
+    };
+    let repeat = if config.behavior.show_repeat_count {
+        3
+    } else {
+        1
+    };
+
+    items.push(DisplayItem {
+        id,
+        kind: DisplayItemKind::KeyStrokeGroup {
+            strokes: vec![
+                KeyStrokeEntry {
+                    label: "S".to_string(),
+                    modifiers: Modifiers {
+                        ctrl: true,
+                        ..Modifiers::default()
+                    },
+                    action: KeyAction::Down,
+                    repeat_count: 1,
+                },
+                KeyStrokeEntry {
+                    label: num_label.to_string(),
+                    modifiers: Modifiers::default(),
+                    action: KeyAction::Down,
+                    repeat_count: repeat,
+                },
+                KeyStrokeEntry {
+                    label: "A".to_string(),
+                    modifiers: Modifiers::default(),
+                    action: KeyAction::Up,
+                    repeat_count: 1,
+                },
+            ],
+        },
+        created_at: now,
+        opacity,
+        phase: DisplayPhase::Active,
+    });
+    id += 1;
+
+    let (keys_label, action_label) = config
+        .shortcuts
+        .first()
+        .map(|s| (s.keys.clone(), s.label.clone()))
+        .unwrap_or_else(|| ("Ctrl+C".into(), "Copy".into()));
+    items.push(DisplayItem {
+        id,
+        kind: DisplayItemKind::Shortcut {
+            keys_label,
+            action_label,
+        },
+        created_at: now,
+        opacity,
+        phase: DisplayPhase::Active,
+    });
+    id += 1;
+
+    if config.behavior.show_ime_composition {
+        items.push(DisplayItem {
+            id,
+            kind: DisplayItemKind::ImeComposition {
+                text: "かな漢字変換中".to_string(),
+            },
+            created_at: now,
+            opacity,
+            phase: DisplayPhase::Active,
+        });
+        id += 1;
+    }
+
+    if config.behavior.show_clipboard {
+        let sample = "The quick brown fox jumps over the lazy dog 1234567890";
+        let max = config.behavior.clipboard_max_chars;
+        let char_count = sample.chars().count();
+        let text = if char_count > max {
+            let truncated: String = sample.chars().take(max).collect();
+            format!("{}...", truncated)
+        } else {
+            sample.to_string()
+        };
+
+        items.push(DisplayItem {
+            id,
+            kind: DisplayItemKind::ClipboardPreview { text },
+            created_at: now,
+            opacity,
+            phase: DisplayPhase::Active,
+        });
+    }
+
+    items
 }
 
 fn romaji_to_hiragana(romaji: &str) -> String {
