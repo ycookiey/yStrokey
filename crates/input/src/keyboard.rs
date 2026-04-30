@@ -5,9 +5,9 @@ use std::time::Instant;
 use windows::Win32::Foundation::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetKeyState, VK_CAPITAL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
-    VK_NUMLOCK, VK_RCONTROL, VK_RMENU,
-    VK_RSHIFT, VK_RWIN, VK_SCROLL,
+    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, ToUnicodeEx, VK_CAPITAL, VK_CONTROL, VK_LCONTROL,
+    VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NUMLOCK, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN,
+    VK_SCROLL, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -72,6 +72,57 @@ fn get_current_modifiers() -> Modifiers {
     }
 }
 
+/// VK と scan_code から実入力文字を取得する。
+/// LL hook では呼出スレッドがキーボードフォーカスを持たないため、
+/// `GetKeyboardState` ではなく `GetAsyncKeyState` から状態を再構築する。
+/// `ToUnicodeEx` の flags=2 はキーボードの内部状態（デッドキーバッファ）を
+/// 変更しないオプション (Win10 1607+)。
+fn resolve_text(vk: u32, scan_code: u32) -> Option<String> {
+    unsafe {
+        let mut ks = [0u8; 256];
+        let set_async = |arr: &mut [u8; 256], v: u16| {
+            let down = (GetAsyncKeyState(v as i32) as u16 & 0x8000) != 0;
+            if down {
+                arr[v as usize] = 0x80;
+            }
+        };
+        set_async(&mut ks, VK_LSHIFT.0);
+        set_async(&mut ks, VK_RSHIFT.0);
+        set_async(&mut ks, VK_LCONTROL.0);
+        set_async(&mut ks, VK_RCONTROL.0);
+        set_async(&mut ks, VK_LMENU.0);
+        set_async(&mut ks, VK_RMENU.0);
+        if ks[VK_LSHIFT.0 as usize] != 0 || ks[VK_RSHIFT.0 as usize] != 0 {
+            ks[VK_SHIFT.0 as usize] = 0x80;
+        }
+        if ks[VK_LCONTROL.0 as usize] != 0 || ks[VK_RCONTROL.0 as usize] != 0 {
+            ks[VK_CONTROL.0 as usize] = 0x80;
+        }
+        if ks[VK_LMENU.0 as usize] != 0 || ks[VK_RMENU.0 as usize] != 0 {
+            ks[VK_MENU.0 as usize] = 0x80;
+        }
+        if (GetKeyState(VK_CAPITAL.0 as i32) & 1) != 0 {
+            ks[VK_CAPITAL.0 as usize] = 0x01;
+        }
+
+        // 前景ウィンドウのキーボードレイアウトを使う（JIS/US 等を反映）
+        let fg = GetForegroundWindow();
+        let tid = GetWindowThreadProcessId(fg, None);
+        let hkl = GetKeyboardLayout(tid);
+
+        let mut buf = [0u16; 8];
+        let n = ToUnicodeEx(vk, scan_code, &ks, &mut buf, 2, hkl);
+        if n <= 0 {
+            return None;
+        }
+        let s = String::from_utf16_lossy(&buf[..n as usize]);
+        if s.is_empty() || s.chars().any(|c| c.is_control()) {
+            return None;
+        }
+        Some(s)
+    }
+}
+
 /// テンキー由来かどうかを判定
 fn is_numpad_key(kb: &KBDLLHOOKSTRUCT) -> bool {
     let vk = kb.vkCode;
@@ -127,6 +178,12 @@ unsafe extern "system" fn keyboard_hook_proc(
 
         let key_code = to_key_code(kb);
         let modifiers = get_current_modifiers();
+        // Down時のみ実文字を解決（Up は不要、デッドキー副作用を避ける意味でも限定）
+        let text = if action == KeyAction::Down {
+            resolve_text(kb.vkCode, kb.scanCode)
+        } else {
+            None
+        };
 
         let event = InputEvent::Key(KeyEvent {
             key: key_code,
@@ -134,6 +191,7 @@ unsafe extern "system" fn keyboard_hook_proc(
             modifiers,
             is_numpad: is_numpad_key(kb),
             scan_code: kb.scanCode,
+            text,
             timestamp: Instant::now(),
         });
 

@@ -98,6 +98,7 @@ const ID_BEHAVIOR_GROUP_TIMEOUT: u16 = 1308;
 const ID_BEHAVIOR_MAX_GROUP_SIZE: u16 = 1309;
 const ID_BEHAVIOR_IGNORED_KEYS: u16 = 1310;
 const ID_BEHAVIOR_EXCLUDE_CAPTURE: u16 = 1311;
+const ID_BEHAVIOR_SHIFT_TYPED_SYMBOLS: u16 = 1312;
 
 const ID_PRIVACY_ENABLED: u16 = 1400;
 const ID_PRIVACY_BLOCKED_APPS: u16 = 1401;
@@ -148,6 +149,7 @@ fn should_request_preview(changed_control_id: u16) -> bool {
             | ID_BEHAVIOR_KEY_TRANSITION_MODE
             | ID_BEHAVIOR_SHOW_REPEAT_COUNT
             | ID_BEHAVIOR_DISTINGUISH_NUMPAD
+            | ID_BEHAVIOR_SHIFT_TYPED_SYMBOLS
             | ID_BEHAVIOR_SHOW_IME
             | ID_BEHAVIOR_SHOW_CLIPBOARD
             | ID_BEHAVIOR_CLIPBOARD_MAX_CHARS
@@ -407,6 +409,7 @@ unsafe fn rebuild_category(hwnd: HWND, state: &mut SettingsState) {
             );
             add_check_row(hwnd, state, "Show repeat count", ID_BEHAVIOR_SHOW_REPEAT_COUNT, cfg.behavior.show_repeat_count, &mut y);
             add_check_row(hwnd, state, "Distinguish numpad", ID_BEHAVIOR_DISTINGUISH_NUMPAD, cfg.behavior.distinguish_numpad, &mut y);
+            add_check_row(hwnd, state, "Show Shift badge for typed symbols (e.g. Shift+\")", ID_BEHAVIOR_SHIFT_TYPED_SYMBOLS, cfg.behavior.show_shift_for_typed_symbols, &mut y);
             add_check_row(hwnd, state, "Show IME composition", ID_BEHAVIOR_SHOW_IME, cfg.behavior.show_ime_composition, &mut y);
             add_check_row(hwnd, state, "Show clipboard", ID_BEHAVIOR_SHOW_CLIPBOARD, cfg.behavior.show_clipboard, &mut y);
             add_edit_row(hwnd, state, "Clipboard max chars", ID_BEHAVIOR_CLIPBOARD_MAX_CHARS, &cfg.behavior.clipboard_max_chars.to_string(), &mut y);
@@ -808,6 +811,7 @@ unsafe fn apply_control_to_config(parent: HWND, id: u16, cfg: &mut AppConfig) ->
         }
         ID_BEHAVIOR_SHOW_REPEAT_COUNT => cfg.behavior.show_repeat_count = get_checkbox(parent, id),
         ID_BEHAVIOR_DISTINGUISH_NUMPAD => cfg.behavior.distinguish_numpad = get_checkbox(parent, id),
+        ID_BEHAVIOR_SHIFT_TYPED_SYMBOLS => cfg.behavior.show_shift_for_typed_symbols = get_checkbox(parent, id),
         ID_BEHAVIOR_SHOW_IME => cfg.behavior.show_ime_composition = get_checkbox(parent, id),
         ID_BEHAVIOR_SHOW_CLIPBOARD => cfg.behavior.show_clipboard = get_checkbox(parent, id),
         ID_BEHAVIOR_CLIPBOARD_MAX_CHARS => cfg.behavior.clipboard_max_chars = get_edit_usize(parent, id)?,
