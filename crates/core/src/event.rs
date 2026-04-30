@@ -38,6 +38,9 @@ pub struct KeyEvent {
     pub is_numpad: bool,
     /// Win32スキャンコード
     pub scan_code: u32,
+    /// 押下時の実入力文字（Shift/AltGr/レイアウト反映済み、ToUnicodeEx由来）。
+    /// OEMキー等で `label()` が `?` を返すケースのフォールバック表示に使う。
+    pub text: Option<String>,
     /// イベント発生時刻
     pub timestamp: Instant,
 }

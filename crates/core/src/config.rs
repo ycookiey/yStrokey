@@ -83,6 +83,12 @@ pub struct BehaviorConfig {
     pub max_group_size: usize,
     pub ignored_keys: Vec<String>,
     pub exclude_from_capture: bool,
+    /// 数字行・OEM 記号キーで Shift 押下時、Shift バッジを表示するか。
+    /// false (default) なら `Shift+2` 入力で `"` 単独表示、
+    /// true なら従来どおり `Shift+"` 表示。
+    /// 既存 config 互換のため serde default。
+    #[serde(default)]
+    pub show_shift_for_typed_symbols: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -250,6 +256,7 @@ impl Default for BehaviorConfig {
             max_group_size: 10,
             ignored_keys: Vec::new(),
             exclude_from_capture: false,
+            show_shift_for_typed_symbols: false,
         }
     }
 }

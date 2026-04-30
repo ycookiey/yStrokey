@@ -655,6 +655,7 @@ fn merge_preview_config(base: &AppConfig, draft: &AppConfig) -> AppConfig {
     cfg.behavior.key_transition_mode = draft.behavior.key_transition_mode;
     cfg.behavior.show_repeat_count = draft.behavior.show_repeat_count;
     cfg.behavior.distinguish_numpad = draft.behavior.distinguish_numpad;
+    cfg.behavior.show_shift_for_typed_symbols = draft.behavior.show_shift_for_typed_symbols;
     cfg.behavior.show_ime_composition = draft.behavior.show_ime_composition;
     cfg.behavior.show_clipboard = draft.behavior.show_clipboard;
     cfg.behavior.clipboard_max_chars = draft.behavior.clipboard_max_chars;

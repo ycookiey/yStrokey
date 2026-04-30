@@ -245,10 +245,40 @@ impl DisplayState {
         let now = ke.timestamp;
 
         // 表示ラベル: distinguish_numpad に応じてテンキー区別を制御
-        let display_label = if self.config.behavior.distinguish_numpad {
+        let base_label = if self.config.behavior.distinguish_numpad {
             ke.key.label()
         } else {
             ke.key.label_plain()
+        };
+        // 以下のキーは ToUnicodeEx 由来の実入力文字 (text) を優先表示する:
+        //   - OEM範囲 (VK 0xBA-0xE2): label() が "?" になる記号キー (`_` `\` 等)
+        //   - 数字行 (VK 0x30-0x39): Shift で記号に変わる (`Shift+2` → `"` 等)
+        // ショートカット判定や IME 関連は base_label / VK ベースのまま維持。
+        let prefer_text = {
+            let vk = ke.key.0 & 0xFF;
+            (0xBA..=0xE2).contains(&vk) || (0x30..=0x39).contains(&vk)
+        };
+        let display_label_owned: String;
+        let display_label: &str = if prefer_text {
+            if let Some(ref t) = ke.text {
+                display_label_owned = t.clone();
+                display_label_owned.as_str()
+            } else {
+                base_label
+            }
+        } else {
+            base_label
+        };
+        // text 優先キー（記号化される範囲）では Shift キーバッジを抑制する。
+        // Down だけでなく Up でも同様にしないと、Up側で `Shift+"` が出てしまう。
+        // Ctrl/Alt/Win は別の意味を持つので残す。
+        // 設定で Shift バッジ表示を有効化されているときは抑制しない。
+        let suppress_shift =
+            prefer_text && !self.config.behavior.show_shift_for_typed_symbols;
+        let display_modifiers = if suppress_shift {
+            Modifiers { shift: false, ..ke.modifiers }
+        } else {
+            ke.modifiers
         };
 
         match ke.action {
@@ -282,7 +312,7 @@ impl DisplayState {
                             .unwrap_or_else(|| {
                                 self.add_keystroke(
                                     display_label.to_string(),
-                                    ke.modifiers,
+                                    display_modifiers,
                                     KeyAction::Down,
                                     now,
                                 )
@@ -290,7 +320,7 @@ impl DisplayState {
                     } else {
                         self.add_keystroke(
                             display_label.to_string(),
-                            ke.modifiers,
+                            display_modifiers,
                             KeyAction::Down,
                             now,
                         )
@@ -298,7 +328,7 @@ impl DisplayState {
                 } else {
                     self.add_keystroke(
                         display_label.to_string(),
-                        ke.modifiers,
+                        display_modifiers,
                         KeyAction::Down,
                         now,
                     )
@@ -323,7 +353,7 @@ impl DisplayState {
                         self.active_presses.remove(&PressKey::from_key_event(&ke));
                         let _ = self.add_keystroke(
                             display_label.to_string(),
-                            ke.modifiers,
+                            display_modifiers,
                             KeyAction::Up,
                             now,
                         );
