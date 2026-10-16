@@ -33,4 +33,9 @@ cargo build --release
 | `display.display_duration_ms` | 表示時間 (ms) | `2000` |
 | `behavior.group_timeout_ms` | 連続入力グルーピング閾値 (ms)。0で無効 | `300` |
 | `behavior.max_group_size` | 1グループの最大キー数 | `10` |
+| `behavior.pause_in_games` | ゲームが前面にある間、OSDの表示とキー入力の取得を止める | `true` |
 | `hotkey.toggle` | OSD切替ホットキー | `Ctrl+Alt+F12` |
+
+## ゲーム中の動作
+
+Windowsがゲームとして記録しているアプリが前面にある間は、OSDの表示とキー入力の取得を止める。ゲームの記録はWindowsがXbox Game Barのために持つもので、ゲームのランチャーが含まれることもある。ゲーム中も表示するには、`behavior.pause_in_games`を`false`にするか、設定ウィンドウの**Pause while a game is in the foreground**のチェックを外す。

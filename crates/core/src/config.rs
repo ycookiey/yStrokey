@@ -89,6 +89,13 @@ pub struct BehaviorConfig {
     /// 既存 config 互換のため serde default。
     #[serde(default)]
     pub show_shift_for_typed_symbols: bool,
+    /// ゲームが前面にある間は、OSDの表示とキー入力の取得を止める
+    #[serde(default = "default_true")]
+    pub pause_in_games: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -257,6 +264,7 @@ impl Default for BehaviorConfig {
             ignored_keys: Vec::new(),
             exclude_from_capture: false,
             show_shift_for_typed_symbols: false,
+            pause_in_games: true,
         }
     }
 }
@@ -575,6 +583,14 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir().join(format!("ystrokey-{}-{}.json", name, stamp))
+    }
+
+    #[test]
+    fn pause_in_games_defaults_to_true_when_missing() {
+        let mut json = serde_json::to_value(AppConfig::default()).unwrap();
+        json["behavior"].as_object_mut().unwrap().remove("pause_in_games");
+        let config: AppConfig = serde_json::from_value(json).unwrap();
+        assert!(config.behavior.pause_in_games);
     }
 
     #[test]

@@ -99,6 +99,7 @@ const ID_BEHAVIOR_MAX_GROUP_SIZE: u16 = 1309;
 const ID_BEHAVIOR_IGNORED_KEYS: u16 = 1310;
 const ID_BEHAVIOR_EXCLUDE_CAPTURE: u16 = 1311;
 const ID_BEHAVIOR_SHIFT_TYPED_SYMBOLS: u16 = 1312;
+const ID_BEHAVIOR_PAUSE_IN_GAMES: u16 = 1313;
 
 const ID_PRIVACY_ENABLED: u16 = 1400;
 const ID_PRIVACY_BLOCKED_APPS: u16 = 1401;
@@ -418,6 +419,7 @@ unsafe fn rebuild_category(hwnd: HWND, state: &mut SettingsState) {
             add_edit_row(hwnd, state, "Group timeout (ms)", ID_BEHAVIOR_GROUP_TIMEOUT, &cfg.behavior.group_timeout_ms.to_string(), &mut y);
             add_edit_row(hwnd, state, "Max group size", ID_BEHAVIOR_MAX_GROUP_SIZE, &cfg.behavior.max_group_size.to_string(), &mut y);
             add_check_row(hwnd, state, "Exclude from capture", ID_BEHAVIOR_EXCLUDE_CAPTURE, cfg.behavior.exclude_from_capture, &mut y);
+            add_check_row(hwnd, state, "Pause while a game is in the foreground", ID_BEHAVIOR_PAUSE_IN_GAMES, cfg.behavior.pause_in_games, &mut y);
             add_multiline_row(
                 hwnd,
                 state,
@@ -824,6 +826,7 @@ unsafe fn apply_control_to_config(parent: HWND, id: u16, cfg: &mut AppConfig) ->
             cfg.behavior.ignored_keys = split_lines(&text);
         }
         ID_BEHAVIOR_EXCLUDE_CAPTURE => cfg.behavior.exclude_from_capture = get_checkbox(parent, id),
+        ID_BEHAVIOR_PAUSE_IN_GAMES => cfg.behavior.pause_in_games = get_checkbox(parent, id),
 
         ID_PRIVACY_ENABLED => cfg.privacy.enabled = get_checkbox(parent, id),
         ID_PRIVACY_BLOCKED_APPS => {

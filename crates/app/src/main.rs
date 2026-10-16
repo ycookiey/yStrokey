@@ -26,10 +26,11 @@ use windows::Win32::Storage::FileSystem::{
     FindFirstChangeNotificationW, FindNextChangeNotification, FILE_NOTIFY_CHANGE_FILE_NAME,
     FILE_NOTIFY_CHANGE_LAST_WRITE,
 };
-use windows::Win32::System::Threading::INFINITE;
+use windows::Win32::System::Threading::{CreateEventW, INFINITE};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 use ystrokey_input::{
-    install_keyboard_hook, is_privacy_target, poll_ime_state, set_wake_window, ClipboardListener,
+    install_keyboard_hook, is_privacy_target, poll_ime_state, set_hook_enabled, set_wake_window,
+    ClipboardListener, GameList,
 };
 use ystrokey_render::{get_monitor_device_name, D2DRenderer, OsdWindow};
 
@@ -75,7 +76,7 @@ struct RuntimeIntervals {
     config_reload_interval: Duration,
 }
 
-/// フォアグラウンドウィンドウを判定し直すか。フォアグラウンドウィンドウか設定が変わった可能性があるときに立てる。
+/// フォアグラウンドウィンドウを判定し直すか。フォアグラウンドウィンドウ・ゲームの一覧・設定が変わった可能性があるときに立てる。
 /// 起動直後にも1回判定するため、初期値はtrue
 static FOREGROUND_DIRTY: AtomicBool = AtomicBool::new(true);
 
@@ -386,6 +387,16 @@ fn main() {
     set_wake_window(window.hwnd());
     let _hook_thread = install_keyboard_hook(tx.clone());
 
+    let mut games = GameList::load();
+    logger::log(
+        DiagnosticsLevel::Info,
+        &format!("game list: {} executables", games.len()),
+    );
+    let game_event = unsafe { CreateEventW(None, false, false, None) }.ok();
+    let game_watch = match game_event {
+        Some(event) => games.watch(event),
+        None => false,
+    };
     let config_watch = watch_directory(&config_path);
     let foreground_hook = unsafe {
         SetWinEventHook(
@@ -425,6 +436,7 @@ fn main() {
     let mut was_rendering = false;
     let mut last_foreground_hwnd = HWND::default();
     let mut last_foreground_poll = Instant::now();
+    let mut in_game = false;
     let mut ime_follow_until: Option<Instant> = None;
 
     loop {
@@ -531,7 +543,7 @@ fn main() {
                     continue;
                 }
                 other => {
-                    if enabled && !privacy_active {
+                    if enabled && !privacy_active && !in_game {
                         if matches!(other, InputEvent::Key(_)) {
                             ime_follow_until = Some(Instant::now() + IME_FOLLOW);
                         }
@@ -548,7 +560,18 @@ fn main() {
         }
         // 通知は遅れて届くことがあるので、通知の対象のウィンドウではなく今のフォアグラウンドウィンドウで判定する
         if FOREGROUND_DIRTY.swap(false, Ordering::SeqCst) {
-            logger::log(DiagnosticsLevel::Debug, "foreground changed");
+            let game = saved_config.behavior.pause_in_games && games.foreground_is_game();
+            logger::log(DiagnosticsLevel::Debug, &format!("foreground changed: game={game}"));
+            if game != in_game {
+                in_game = game;
+                set_hook_enabled(!game);
+                // フックを外すとキーを離したイベントが届かないので、押されたままの表示（Alt+TabのAltなど）を消しておく
+                state.clear();
+                logger::log(
+                    DiagnosticsLevel::Info,
+                    if game { "game: enter (OSD, IME polling and keyboard hook off)" } else { "game: leave" },
+                );
+            }
             let fg = unsafe { GetForegroundWindow() };
             if fg != last_foreground_hwnd {
                 last_foreground_hwnd = fg;
@@ -557,14 +580,14 @@ fn main() {
                 if privacy_active && !prev_privacy {
                     state.clear();
                 }
-                if !fg.0.is_null() {
+                if !fg.0.is_null() && !in_game {
                     window.reposition_to_monitor(fg, &effective_config.display);
                 }
             }
             ime_follow_until = Some(now + IME_FOLLOW);
         }
         if let Some(until) = ime_follow_until {
-            if now >= until {
+            if now >= until || in_game {
                 ime_follow_until = None;
             } else if now.duration_since(last_ime_poll) >= intervals.ime_poll_interval {
                 if enabled && !privacy_active {
@@ -661,7 +684,7 @@ fn main() {
             was_rendering = has_any;
             std::thread::sleep(intervals.frame_duration);
         } else {
-            // 描画していない間は、メッセージ（キー入力とフォアグラウンドの切り替えを含む）か、設定フォルダの変更通知が届くまで待つ。
+            // 描画していない間は、メッセージ（キー入力とフォアグラウンドの切り替えを含む）か、設定フォルダ・ゲームの一覧の変更通知が届くまで待つ。
             // タイムアウトを付けるのは、IMEかフォアグラウンドウィンドウを定期的に確かめている間と、設定の変更通知を作れなかったときだけ
             let mut timeout = INFINITE;
             if poll_foreground {
@@ -678,18 +701,37 @@ fn main() {
                     .saturating_sub(last_config_check.elapsed());
                 timeout = timeout.min(next.as_millis() as u32);
             }
-            let mut handles: Vec<HANDLE> = Vec::with_capacity(1);
+            let mut handles: Vec<HANDLE> = Vec::with_capacity(2);
             if let Some(h) = config_watch {
                 handles.push(h);
             }
+            let game_slot = match (game_watch, game_event) {
+                (true, Some(e)) => {
+                    handles.push(e);
+                    Some(handles.len() - 1)
+                }
+                _ => None,
+            };
             let woke = unsafe {
                 MsgWaitForMultipleObjectsEx(Some(&handles), timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE)
             };
             let index = woke.0.wrapping_sub(WAIT_OBJECT_0.0) as usize;
             if index < handles.len() {
-                config_changed = true;
-                unsafe {
-                    let _ = FindNextChangeNotification(handles[index]);
+                if Some(index) == game_slot {
+                    games.reload();
+                    if let Some(e) = game_event {
+                        games.watch(e);
+                    }
+                    FOREGROUND_DIRTY.store(true, Ordering::SeqCst);
+                    logger::log(
+                        DiagnosticsLevel::Info,
+                        &format!("game list changed: {} executables", games.len()),
+                    );
+                } else {
+                    config_changed = true;
+                    unsafe {
+                        let _ = FindNextChangeNotification(handles[index]);
+                    }
                 }
             }
         }
@@ -705,7 +747,7 @@ fn apply_config(
     intervals: &mut RuntimeIntervals,
 ) {
     apply_visual_config(config, state, renderer, window);
-    // プライバシーの対象のアプリが変わったかもしれないので、判定し直す
+    // pause_in_gamesとプライバシーの対象のアプリが変わったかもしれないので、判定し直す
     FOREGROUND_DIRTY.store(true, Ordering::SeqCst);
 
     intervals.frame_duration = Duration::from_millis(config.performance.frame_interval_ms);

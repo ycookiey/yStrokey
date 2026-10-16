@@ -1,7 +1,9 @@
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::thread::JoinHandle;
 use std::time::Instant;
+
+use windows::Win32::System::Threading::GetCurrentThreadId;
 
 use windows::Win32::Foundation::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -21,8 +23,25 @@ thread_local! {
 
 /// イベントを送った後にWM_NULLを送るウィンドウ。メインループはメッセージが届くまで待つので、WM_NULLで起こす。0なら送らない
 static WAKE_HWND: AtomicIsize = AtomicIsize::new(0);
+static HOOK_WANTED: AtomicBool = AtomicBool::new(true);
+/// フックのスレッドのID（0はまだ起動していない）
+static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+/// フックのスレッドにHOOK_WANTEDを当て直させるスレッドメッセージ
+const WM_APP_HOOK_SYNC: u32 = WM_APP + 0x10;
+
 pub fn set_wake_window(hwnd: HWND) {
     WAKE_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
+}
+
+/// キーボードのフックを付ける・外す。低レベルのフックを付けている間は、OSがすべてのキー入力でこのフックの応答を待つので、不要な間は外す
+pub fn set_hook_enabled(enabled: bool) {
+    HOOK_WANTED.store(enabled, Ordering::SeqCst);
+    let tid = HOOK_THREAD_ID.load(Ordering::SeqCst);
+    if tid != 0 {
+        unsafe {
+            let _ = PostThreadMessageW(tid, WM_APP_HOOK_SYNC, WPARAM(0), LPARAM(0));
+        }
+    }
 }
 
 fn wake_main() {
@@ -235,22 +254,45 @@ pub fn run_hook_thread(tx: SyncSender<InputEvent>) {
 
     unsafe {
         let hmod = GetModuleHandleW(None).ok().map(|h| HINSTANCE(h.0));
-        let kb_hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), hmod.unwrap_or_default(), 0) {
-            Ok(hook) => hook,
-            Err(e) => {
-                eprintln!("keyboard hook install failed: {e}");
-                return;
+        let mut kb_hook: Option<HHOOK> = None;
+        let sync =|hook: &mut Option<HHOOK>| {
+            let wanted = HOOK_WANTED.load(Ordering::SeqCst);
+            match (wanted, hook.is_some()) {
+                (true, false) => {
+                    match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), hmod.unwrap_or_default(), 0) {
+                        Ok(h) => *hook = Some(h),
+                        Err(e) => eprintln!("keyboard hook install failed: {e}"),
+                    }
+                }
+                (false, true) => {
+                    if let Some(h) = hook.take() {
+                        let _ = UnhookWindowsHookEx(h);
+                    }
+                }
+                _ => {}
             }
         };
 
-        // LL hookはメッセージループが必須
+        // PostThreadMessageWはメッセージキューの無いスレッドに送れないので、IDを公開する前にキューを作る
         let mut msg = MSG::default();
+        let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
+        HOOK_THREAD_ID.store(GetCurrentThreadId(), Ordering::SeqCst);
+        // IDを公開した後にHOOK_WANTEDを読むので、公開の前に変わった値も取りこぼさない
+        sync(&mut kb_hook);
+
+        // LL hookはメッセージループが必須
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            if msg.hwnd.0.is_null() && msg.message == WM_APP_HOOK_SYNC {
+                sync(&mut kb_hook);
+                continue;
+            }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
 
-        let _ = UnhookWindowsHookEx(kb_hook);
+        if let Some(h) = kb_hook {
+            let _ = UnhookWindowsHookEx(h);
+        }
     }
 }
 
