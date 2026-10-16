@@ -59,7 +59,7 @@ scoop install ystrokey
 | `behavior.distinguish_numpad` | テンキーを通常のキーと区別して表示する | `true` |
 | `behavior.show_repeat_count` | 同じキーの連打回数を表示する | `true` |
 | `behavior.show_ime_composition` | IMEで入力中の未確定の文字列を表示する | `true` |
-| `behavior.show_clipboard` | クリップボードにコピーした内容を表示する | `true` |
+| `behavior.show_clipboard` | クリップボードにコピーした内容を表示する | `false` |
 | `behavior.show_lock_indicators` | Caps Lock、Num Lock、Scroll Lockの状態を表示する | `true` |
 | `behavior.group_timeout_ms` | 連続入力を1グループにまとめる入力間隔の上限。単位はms。0でグループ化を無効にする | `300` |
 | `behavior.max_group_size` | 1グループにまとめるキーの最大数 | `10` |
@@ -76,7 +76,7 @@ scoop install ystrokey
 
 ## プライバシー
 
-`privacy.enabled`が`true`のとき、前面のアプリの実行ファイル名が`privacy.blocked_apps`のいずれかと一致する間は、OSDに何も表示しない。すでに表示している表示枠も消える。実行ファイル名は、大文字と小文字を区別せずに比べる。クリップボードにコピーした文字列は、既定でOSDに表示する。配信や録画に映したくないときは、`behavior.show_clipboard`を`false`にする。`privacy.blocked_apps`の既定は、パスワードマネージャーの`KeePass.exe`と`1Password.exe`。表示しないアプリは、設定ウィンドウか`privacy.blocked_apps`で追加、削除できる。
+`privacy.enabled`が`true`のとき、前面のアプリの実行ファイル名が`privacy.blocked_apps`のいずれかと一致する間は、OSDに何も表示しない。すでに表示している表示枠も消える。実行ファイル名は、大文字と小文字を区別せずに比べる。クリップボードにコピーした文字列は、既定ではOSDに表示しない。コピーした文字列が配信や録画に映らないようにするため。表示するには、`behavior.show_clipboard`を`true`にする。`privacy.blocked_apps`の既定は、パスワードマネージャーの`KeePass.exe`と`1Password.exe`。表示しないアプリは、設定ウィンドウか`privacy.blocked_apps`で追加、削除できる。
 
 前面のアプリの実行ファイル名を取得できないときも、安全のためOSDに何も表示しない。
 

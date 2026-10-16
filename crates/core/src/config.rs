@@ -255,7 +255,8 @@ impl Default for BehaviorConfig {
             show_repeat_count: true,
             distinguish_numpad: true,
             show_ime_composition: true,
-            show_clipboard: true,
+            // コピーしたパスワードなどの文字列が、配信や録画に気づかないまま映らないよう、既定では表示しない
+            show_clipboard: false,
             clipboard_max_chars: 50,
             show_lock_indicators: true,
             repeat_timeout_ms: 500,
