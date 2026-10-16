@@ -20,7 +20,7 @@ pub struct D2DRenderer {
     label_text_format: IDWriteTextFormat,
     count_text_format: IDWriteTextFormat,
     text_brush: ID2D1SolidColorBrush,
-    // Up状態の文字色(濃い青)
+    // Up状態の文字色。濃い青
     up_text_brush: ID2D1SolidColorBrush,
     // キー種別ごとの背景ブラシ
     key_down_brush: ID2D1SolidColorBrush,
@@ -80,7 +80,7 @@ impl D2DRenderer {
                 )
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
-            // ショートカットラベル用フォーマット(85%)
+            // ショートカットのラベル用フォーマット。サイズは85%
             let label_text_format = dwrite_factory
                 .CreateTextFormat(
                     PCWSTR(font_wide.as_ptr()),
@@ -93,7 +93,7 @@ impl D2DRenderer {
                 )
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
-            // 連打カウント用フォーマット(75%)
+            // 連打カウント用フォーマット。サイズは75%
             let count_text_format = dwrite_factory
                 .CreateTextFormat(
                     PCWSTR(font_wide.as_ptr()),
@@ -106,12 +106,12 @@ impl D2DRenderer {
                 )
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
-            // テキストブラシ(StyleConfig.text_color)
+            // テキストブラシ。色はStyleConfig.text_color
             let text_brush = render_target
                 .CreateSolidColorBrush(&parse_color(&style.text_color), None)
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
-            // Up状態テキストブラシ(#1565C0)
+            // Up状態のテキストブラシ。色は#1565C0
             let up_text_brush = render_target
                 .CreateSolidColorBrush(&parse_color("#1565C0"), None)
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
@@ -187,7 +187,6 @@ impl D2DRenderer {
         }
     }
 
-    /// DisplayItemKindに応じて背景ブラシを選択
     fn select_bg_brush(&self, item: &DisplayItem) -> &ID2D1SolidColorBrush {
         match &item.kind {
             DisplayItemKind::KeyStroke {
@@ -231,7 +230,6 @@ impl D2DRenderer {
         }
     }
 
-    /// KeyStrokeのUp状態かを判定（Up状態は文字色が異なる）
     fn is_up_state(item: &DisplayItem) -> bool {
         matches!(
             &item.kind,
@@ -242,7 +240,6 @@ impl D2DRenderer {
         )
     }
 
-    /// テキストブラシを選択（Up状態は濃い色）
     fn select_text_brush(&self, item: &DisplayItem) -> &ID2D1SolidColorBrush {
         if Self::is_up_state(item) {
             &self.up_text_brush
@@ -251,7 +248,6 @@ impl D2DRenderer {
         }
     }
 
-    /// StyleConfig変更時にブラシ・フォントを再生成
     pub fn update_style(&mut self, style: &StyleConfig) {
         unsafe {
             // ブラシ更新
@@ -343,7 +339,7 @@ impl D2DRenderer {
                 a: 0.0,
             }));
 
-            // Ghost背景（アイテム描画の前）
+            // Ghost背景。アイテムの描画より前に描く
             self.render_ghost_background(live_items, style, ghost_opacity);
 
             let s = self.dpi_scale;
@@ -435,7 +431,6 @@ impl D2DRenderer {
         }
     }
 
-    /// Ghost-mode: アクティブアイテムの背後に半透明背景を描画
     unsafe fn render_ghost_background(
         &self,
         items: &[DisplayItem],
@@ -451,7 +446,7 @@ impl D2DRenderer {
         let spacing = 4.0_f32 * s;
         let size = self.render_target.GetSize();
 
-        // アイテムがなくても最低1行分のサイズを確保（ドラッグハンドル用）
+        // ドラッグハンドル用に、アイテムがなくても最低1行分のサイズを確保する
         let visible_lines = items.len().max(1) as f32;
         let total_height = visible_lines * (line_height + spacing) - spacing;
         let bottom = size.height;
@@ -533,7 +528,7 @@ impl D2DRenderer {
         );
     }
 
-    /// ショートカット: keys_label(左) + action_label(右、緑バッジ)
+    /// ショートカット: 左にkeys_label、右に緑バッジのaction_label
     #[allow(clippy::too_many_arguments)]
     unsafe fn render_shortcut(
         &self,
@@ -549,7 +544,7 @@ impl D2DRenderer {
         let padding = style.padding * s;
         let border_radius = style.border_radius * s;
 
-        // 背景全体（紫ベース: 修飾キー込みのショートカット）
+        // 背景全体。修飾キーを含むショートカットは紫を基調にする
         let rect = D2D_RECT_F {
             left: padding,
             top,
@@ -567,7 +562,7 @@ impl D2DRenderer {
         self.render_target
             .FillRoundedRectangle(&rounded, &self.modifier_brush);
 
-        // keys_label（左側、白文字）
+        // 左側のkeys_label。白い文字
         let keys_rect = D2D_RECT_F {
             left: rect.left + padding,
             top: rect.top + padding / 2.0,
@@ -586,7 +581,7 @@ impl D2DRenderer {
             DWRITE_MEASURING_MODE_NATURAL,
         );
 
-        // action_label（右側、緑バッジ）
+        // 右側のaction_label。緑のバッジ
         // keys_labelの幅を計測してバッジ位置を決定
         let keys_text_layout = self
             .dwrite_factory
@@ -871,7 +866,6 @@ impl D2DRenderer {
         }
     }
 
-    /// KeyStrokeEntryから背景ブラシを選択
     fn select_entry_bg_brush(&self, entry: &KeyStrokeEntry) -> &ID2D1SolidColorBrush {
         if entry.label.starts_with("Num") {
             &self.numpad_brush
@@ -886,7 +880,6 @@ impl D2DRenderer {
     }
 }
 
-/// 連打カウントなしのテキスト生成
 fn format_item_text_no_count(kind: &DisplayItemKind) -> String {
     match kind {
         DisplayItemKind::KeyStroke {
@@ -974,7 +967,6 @@ fn format_item_text(kind: &DisplayItemKind) -> String {
     }
 }
 
-/// KeyStrokeEntryのテキスト生成（修飾キー付き）
 fn format_entry_text(entry: &KeyStrokeEntry) -> String {
     let mut s = String::new();
     if entry.modifiers.ctrl {
@@ -996,7 +988,7 @@ fn format_entry_text(entry: &KeyStrokeEntry) -> String {
     s
 }
 
-/// "#RRGGBB" or "#RRGGBBAA" 形式をD2D1_COLOR_Fに変換
+/// "#RRGGBB"か"#RRGGBBAA"の形式をD2D1_COLOR_Fに変換
 pub fn parse_color(hex: &str) -> D2D1_COLOR_F {
     let hex = hex.trim_start_matches('#');
     let (r, g, b, a) = match hex.len() {
@@ -1023,7 +1015,6 @@ pub fn parse_color(hex: &str) -> D2D1_COLOR_F {
     }
 }
 
-/// &strをnull終端UTF-16に変換
 pub fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }

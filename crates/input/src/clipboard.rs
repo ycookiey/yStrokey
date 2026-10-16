@@ -15,7 +15,6 @@ pub struct ClipboardListener {
 }
 
 impl ClipboardListener {
-    /// クリップボード監視を開始
     pub fn new(hwnd: HWND) -> windows::core::Result<Self> {
         unsafe {
             AddClipboardFormatListener(hwnd)?;
@@ -23,7 +22,6 @@ impl ClipboardListener {
         Ok(Self { hwnd })
     }
 
-    /// クリップボードからUnicodeテキストを取得
     pub fn get_text(hwnd: HWND) -> Option<String> {
         unsafe {
             if IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_err() {
@@ -48,7 +46,7 @@ impl ClipboardListener {
                     return None;
                 }
 
-                // null終端までの長さを計算（GlobalSize上限付き）
+                // null終端までの長さを計算する。上限はGlobalSize
                 let mut len = 0;
                 while len < max_u16_len && *ptr.add(len) != 0 {
                     len += 1;

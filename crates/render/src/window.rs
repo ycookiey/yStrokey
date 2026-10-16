@@ -92,7 +92,6 @@ impl OsdWindow {
         self.height
     }
 
-    /// D2D BindDC用にメモリDCを公開
     pub fn mem_dc(&self) -> HDC {
         self.mem_dc
     }
@@ -125,7 +124,6 @@ impl OsdWindow {
         }
     }
 
-    /// ウィンドウ矩形を取得
     pub fn get_rect(&self) -> RECT {
         unsafe {
             let mut rect = RECT::default();
@@ -149,7 +147,7 @@ impl OsdWindow {
         }
     }
 
-    /// SetWindowDisplayAffinityでキャプチャ防止(Win10 v2004+)
+    /// SetWindowDisplayAffinityでキャプチャを防ぐ。Win10 v2004以降で使える
     pub fn set_display_affinity(&self, exclude: bool) {
         unsafe {
             let affinity = if exclude {
@@ -177,7 +175,7 @@ impl OsdWindow {
 
     pub fn resize(&mut self, width: i32, height: i32) {
         unsafe {
-            // 新DIBセクションを先に作成（失敗時は旧DIBを維持）
+            // 失敗したときに旧DIBを維持できるよう、新DIBセクションを先に作成する
             let bmi = create_bitmapinfo(width, height);
             let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
             let new_dib = CreateDIBSection(
@@ -311,7 +309,7 @@ fn create_bitmapinfo(width: i32, height: i32) -> BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: mem::size_of::<BITMAPINFOHEADER>() as u32,
             biWidth: width,
-            biHeight: -height, // top-down DIB (負値で上→下)
+            biHeight: -height, // 負値でtop-down DIB(上から下)
             biPlanes: 1,
             biBitCount: 32,
             ..Default::default()
@@ -320,7 +318,7 @@ fn create_bitmapinfo(width: i32, height: i32) -> BITMAPINFO {
     }
 }
 
-/// Position enum + work areaからOSDの座標を計算
+/// Positionとモニターの作業領域からOSDの座標を計算する
 fn compute_position(
     pos: &Position,
     work: &RECT,
@@ -368,7 +366,6 @@ unsafe fn get_primary_monitor_position(width: i32, height: i32, display_config: 
     }
 }
 
-/// モニタのデバイス名を取得
 pub fn get_monitor_device_name(hmon: HMONITOR) -> Option<String> {
     unsafe {
         let mut mi = MONITORINFOEXW::default();

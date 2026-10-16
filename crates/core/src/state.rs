@@ -31,13 +31,13 @@ pub struct DisplayState {
     ime_fallback_romaji: String,
 }
 
-/// 表示アイテム（OSD上の1つの表示要素）
+/// OSD上の1つの表示要素
 #[derive(Debug, Clone)]
 pub struct DisplayItem {
     pub id: u64,
     pub kind: DisplayItemKind,
     pub created_at: Instant,
-    /// 0.0（透明）〜 1.0（不透明）
+    /// 0.0で透明、1.0で不透明
     pub opacity: f32,
     /// フェーズ
     pub phase: DisplayPhase,
@@ -52,11 +52,11 @@ pub enum DisplayItemKind {
         action: KeyAction,
         repeat_count: u32,
     },
-    /// 連続キー入力グループ（水平並列表示）
+    /// 連続したキー入力のグループ。水平に並べて表示する
     KeyStrokeGroup {
         strokes: Vec<KeyStrokeEntry>,
     },
-    /// ショートカットキー（特殊表示）
+    /// ショートカットキー。特別な表示にする
     Shortcut {
         keys_label: String,
         action_label: String,
@@ -84,11 +84,11 @@ pub struct KeyStrokeEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayPhase {
-    /// 表示中（フルopacity）
+    /// 表示中。不透明度は最大
     Active,
     /// フェードアウト中
     FadingOut,
-    /// 期限切れ（削除対象）
+    /// 期限切れ。削除する
     Expired,
 }
 
@@ -227,12 +227,12 @@ impl DisplayState {
             return;
         }
 
-        // IME切替キーは常に捕捉（"?"表示を防ぐ）
+        // "?"の表示を防ぐため、IME切替キーは常に捕捉する
         if self.handle_ime_toggle_key(&ke) {
             return;
         }
 
-        // IMEフォールバック入力（Composition取得失敗時の救済）
+        // IMEのフォールバック入力。Compositionを取得できなかったときに使う
         if self.handle_ime_fallback_key(&ke) {
             return;
         }
@@ -250,9 +250,9 @@ impl DisplayState {
         } else {
             ke.key.label_plain()
         };
-        // 以下のキーはToUnicodeEx由来の実入力文字(text)を優先表示する:
-        //   - OEM範囲(VK 0xBA-0xE2): label()が "?" になる記号キー(`_` `\`等)
-        //   - 数字行(VK 0x30-0x39): Shiftで記号に変わる(`Shift+2` → `"`等)
+        // 以下のキーはToUnicodeExで得た実入力文字のtextを優先して表示する:
+        //   - OEMキーの範囲(VK 0xBA-0xE2): label()が"?"になる記号キー(`_` `\`など)
+        //   - 数字行(VK 0x30-0x39): Shiftで記号に変わるキー(`Shift+2` → `"`など)
         // ショートカット判定やIME関連はbase_label / VKベースのまま維持。
         let prefer_text = {
             let vk = ke.key.0 & 0xFF;
@@ -269,7 +269,7 @@ impl DisplayState {
         } else {
             base_label
         };
-        // text優先キー（記号化される範囲）ではShiftキーバッジを抑制する。
+        // text優先キーでは、記号に変わる範囲でShiftキーのバッジを抑制する。
         // DownだけでなくUpでも同様にしないと、Up側で`Shift+"`が出てしまう。
         // Ctrl/Alt/Winは別の意味を持つので残す。
         // 設定でShiftバッジ表示を有効化されているときは抑制しない。
@@ -334,7 +334,7 @@ impl DisplayState {
                     )
                 };
 
-                // 連打カウント（show_repeat_countが有効な場合のみ追跡）
+                // 連打カウントは、show_repeat_countが有効なときだけ追跡する
                 if self.config.behavior.key_transition_mode == KeyTransitionMode::SingleCell {
                     self.active_presses
                         .insert(PressKey::from_key_event(&ke), target);
@@ -493,7 +493,6 @@ impl DisplayState {
         );
     }
 
-    /// 時間経過処理（毎フレーム呼び出し）
     pub fn tick(&mut self, now: Instant) {
         let display_dur =
             Duration::from_millis(self.config.display.display_duration_ms);
@@ -534,7 +533,6 @@ impl DisplayState {
         &self.items
     }
 
-    /// 全アイテムをクリア（privacy遷移時等）
     pub fn clear(&mut self) {
         self.items.clear();
         self.active_presses.clear();
@@ -549,7 +547,6 @@ impl DisplayState {
             .any(|i| i.phase == DisplayPhase::FadingOut)
     }
 
-    /// 設定を更新（ホットリロード用）
     pub fn update_config(&mut self, config: &AppConfig) {
         let now = Instant::now();
         if self.config.behavior.key_transition_mode != config.behavior.key_transition_mode {
@@ -908,7 +905,6 @@ impl DisplayState {
     }
 }
 
-/// ショートカット定義文字列がキーイベントにマッチするか判定
 fn shortcut_matches(keys_str: &str, ke: &KeyEvent) -> bool {
     let parts: Vec<&str> = keys_str.split('+').collect();
     if parts.is_empty() {
@@ -951,7 +947,7 @@ fn should_suppress_during_ime_composition(ke: &KeyEvent) -> bool {
         return false;
     }
 
-    // VKの下位1byteを使用（拡張値は除外）
+    // 拡張値を除くため、VKの下位1byteを使う
     let vk = ke.key.0 & 0xFF;
     (0x30..=0x5A).contains(&vk) || (0xBA..=0xE2).contains(&vk)
 }
@@ -1072,7 +1068,7 @@ fn romaji_to_hiragana(romaji: &str) -> String {
     let mut i = 0usize;
 
     while i < bytes.len() {
-        // 促音（小さい「っ」）: 子音重複（nn除く）
+        // 促音の小さい「っ」: 子音の重複。nnは除く
         if i + 1 < bytes.len()
             && bytes[i] == bytes[i + 1]
             && is_romaji_consonant(bytes[i] as char)

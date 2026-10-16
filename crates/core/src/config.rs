@@ -84,8 +84,8 @@ pub struct BehaviorConfig {
     pub ignored_keys: Vec<String>,
     pub exclude_from_capture: bool,
     /// 数字行・OEM記号キーでShift押下時、Shiftバッジを表示するか。
-    /// false (default)なら`Shift+2`入力で`"`単独表示、
-    /// trueなら従来どおり`Shift+"`表示。
+    /// 既定はfalse。falseなら`Shift+2`の入力を`"`だけで表示し、
+    /// trueなら`Shift+"`の形で表示する。
     /// 既存config互換のためserde default。
     #[serde(default)]
     pub show_shift_for_typed_symbols: bool,

@@ -35,7 +35,7 @@ impl TrayIcon {
                 ..Default::default()
             };
 
-            // ツールチップ（szTip: [u16; 128] 固定長配列）
+            // ツールチップ。szTipは長さ128の[u16]の固定長配列
             let tip: Vec<u16> = "yStrokey"
                 .encode_utf16()
                 .chain(std::iter::once(0))
@@ -66,7 +66,6 @@ impl Drop for TrayIcon {
     }
 }
 
-/// トレイ右クリックメニューを表示
 pub fn show_context_menu(
     hwnd: HWND,
     menu_language: MenuLanguage,

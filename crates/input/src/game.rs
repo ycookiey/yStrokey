@@ -1,6 +1,6 @@
 //! 前面のアプリがゲームかを、WindowsがXbox Game Barのために記録しているゲームの一覧で判定する。
 //!
-//! 一覧は`HKCU\System\GameConfigStore\Children`にある。実行ファイルのパス（`MatchedExeFullPath`）を
+//! 一覧は`HKCU\System\GameConfigStore\Children`にある。実行ファイルのパスである`MatchedExeFullPath`を
 //! 持つ項目だけを使う。パスの無い項目は、前面のプロセスと照合できない。
 //! `HKCU\System\GameConfigStore\Children`は文書化されていないので、読めないときはどのアプリもゲームとみなさず、OSDを止めない。
 
@@ -24,7 +24,7 @@ use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThre
 
 const CHILDREN: PCWSTR = w!("System\\GameConfigStore\\Children");
 
-/// ゲームの実行ファイルの実体のパスを小文字にした文字列
+/// ゲームの一覧。実行ファイルの実体のパスを小文字にして持つ
 pub struct GameList {
     paths: HashSet<String>,
     notify_key: Option<HKEY>,

@@ -62,7 +62,7 @@ fn to_key_code(kb: &KBDLLHOOKSTRUCT) -> KeyCode {
     match vk {
         // テンキーの0-9
         0x60..=0x69 => KeyCode(vk),
-        // Numpad演算子(*, +, separator, -, ., /)
+        // Numpadの演算子: *, +, separator, -, ., /
         0x6A..=0x6F => KeyCode(vk),
         // Enter: extendedならテンキーのEnter
         0x0D if extended => KeyCode::NUMPAD_ENTER,
@@ -140,7 +140,7 @@ fn resolve_text(vk: u32, scan_code: u32) -> Option<String> {
             ks[VK_CAPITAL.0 as usize] = 0x01;
         }
 
-        // 前面のウィンドウのキーボードレイアウトを使う（JIS/US等を反映）
+        // JISやUSなどを反映するため、前面のウィンドウのキーボードレイアウトを使う
         let fg = GetForegroundWindow();
         let tid = GetWindowThreadProcessId(fg, None);
         let hkl = GetKeyboardLayout(tid);
@@ -158,7 +158,6 @@ fn resolve_text(vk: u32, scan_code: u32) -> Option<String> {
     }
 }
 
-/// テンキー由来かどうかを判定
 fn is_numpad_key(kb: &KBDLLHOOKSTRUCT) -> bool {
     let vk = kb.vkCode;
     let scan = kb.scanCode;
@@ -168,11 +167,11 @@ fn is_numpad_key(kb: &KBDLLHOOKSTRUCT) -> bool {
     if (0x60..=0x6F).contains(&vk) {
         return true;
     }
-    // テンキーのEnter (VK_RETURN + extended)
+    // テンキーのEnter。VK_RETURNでextended
     if vk == 0x0D && extended {
         return true;
     }
-    // NumLockオフ時のスキャンコード範囲(非extended)
+    // NumLockオフ時のスキャンコードの範囲。extendedでないもの
     if (0x47..=0x53).contains(&scan) && !extended {
         return true;
     }
@@ -185,7 +184,6 @@ fn is_lock_key(vk: u32) -> bool {
     vk == VK_CAPITAL.0 as u32 || vk == VK_NUMLOCK.0 as u32 || vk == VK_SCROLL.0 as u32
 }
 
-/// 現在のロック状態を取得する
 fn get_lock_state_event() -> LockStateEvent {
     unsafe {
         LockStateEvent {
@@ -197,7 +195,6 @@ fn get_lock_state_event() -> LockStateEvent {
     }
 }
 
-/// キーボードフックコールバック
 unsafe extern "system" fn keyboard_hook_proc(
     code: i32,
     wparam: WPARAM,
@@ -213,7 +210,7 @@ unsafe extern "system" fn keyboard_hook_proc(
 
         let key_code = to_key_code(kb);
         let modifiers = get_current_modifiers();
-        // Down時のみ実文字を解決（Upは不要、デッドキー副作用を避ける意味でも限定）
+        // 実文字はDownのときだけ解決する。Upでは不要で、デッドキーの副作用も避けられる
         let text = if action == KeyAction::Down {
             resolve_text(kb.vkCode, kb.scanCode)
         } else {
@@ -230,7 +227,7 @@ unsafe extern "system" fn keyboard_hook_proc(
             timestamp: Instant::now(),
         });
 
-        // try_send: バッファフルなら破棄（フックコールバックはブロック不可）
+        // try_send: バッファが満杯なら破棄する。フックのコールバックはブロックできない
         HOOK_SENDER.with(|cell| {
             if let Some(ref tx) = *cell.borrow() {
                 let _ = tx.try_send(event);
@@ -246,7 +243,6 @@ unsafe extern "system" fn keyboard_hook_proc(
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-/// フックスレッドを起動してメッセージループを実行
 pub fn run_hook_thread(tx: SyncSender<InputEvent>) {
     HOOK_SENDER.with(|cell| {
         cell.replace(Some(tx));
@@ -255,7 +251,7 @@ pub fn run_hook_thread(tx: SyncSender<InputEvent>) {
     unsafe {
         let hmod = GetModuleHandleW(None).ok().map(|h| HINSTANCE(h.0));
         let mut kb_hook: Option<HHOOK> = None;
-        let sync =|hook: &mut Option<HHOOK>| {
+        let sync = |hook: &mut Option<HHOOK>| {
             let wanted = HOOK_WANTED.load(Ordering::SeqCst);
             match (wanted, hook.is_some()) {
                 (true, false) => {
@@ -296,7 +292,6 @@ pub fn run_hook_thread(tx: SyncSender<InputEvent>) {
     }
 }
 
-/// キーボードフックを別スレッドで起動するヘルパー
 pub fn install_keyboard_hook(tx: SyncSender<InputEvent>) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("keyboard-hook".into())

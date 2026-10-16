@@ -44,19 +44,19 @@ const HOTKEY_TOGGLE_ID: i32 = 1;
 /// wnd_procからイベント送信用のグローバルチャネル
 static EVENT_TX: OnceLock<SyncSender<InputEvent>> = OnceLock::new();
 
-/// OSD有効/無効（トレイメニューから切替）
+/// OSDの有効/無効。トレイメニューから切り替える
 static OSD_ENABLED: AtomicBool = AtomicBool::new(true);
 
-/// 設定ファイルパス（wnd_procからアクセス用）
+/// 設定ファイルのパス。wnd_procから参照する
 static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
-/// 現在の設定（wnd_procからアクセス用）
+/// 現在の設定。wnd_procから参照する
 static CURRENT_CONFIG: OnceLock<Mutex<AppConfig>> = OnceLock::new();
 
-/// Ghost-modeでインタラクティブ状態かどうか（ドラッグ判定用）
+/// Ghost-modeでインタラクティブ状態かどうか。ドラッグの判定に使う
 static GHOST_INTERACTIVE: AtomicBool = AtomicBool::new(false);
 
-// クリップボード重複検知用（wnd_procはメインスレッドのみで呼ばれる）
+// クリップボードの重複検知用。wnd_procはメインスレッドからだけ呼ばれる
 thread_local! {
     static LAST_CLIPBOARD: RefCell<String> = const { RefCell::new(String::new()) };
 }
@@ -967,7 +967,6 @@ fn distance_to_rect(cursor: &POINT, rect: &RECT) -> f32 {
     ((dx * dx + dy * dy) as f32).sqrt()
 }
 
-/// カーソルが矩形の内側にあるかどうかを返す。
 fn is_cursor_in_rect(rect: &RECT) -> bool {
     unsafe {
         let mut cursor = POINT::default();
@@ -982,7 +981,6 @@ fn is_cursor_in_rect(rect: &RECT) -> bool {
     }
 }
 
-/// 現在のウィンドウ位置を設定ファイルに保存する。
 fn save_current_position(hwnd: HWND) {
     unsafe {
         let mut rect = RECT::default();
@@ -1032,7 +1030,6 @@ fn register_toggle_hotkey(hwnd: HWND, hotkey_str: &str) {
     }
 }
 
-/// ホットキー文字列を(MOD_*, VK)に変換する。
 fn parse_hotkey(s: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     let mut modifiers = MOD_NOREPEAT;
     let mut vk = None;
@@ -1050,7 +1047,6 @@ fn parse_hotkey(s: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     Some((modifiers, vk?))
 }
 
-/// キー名をWin32の仮想キーコードに変換する。
 fn key_name_to_vk(name: &str) -> Option<u32> {
     let vk = match name {
         "F1" => 0x70,

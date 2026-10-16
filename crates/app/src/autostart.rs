@@ -61,7 +61,6 @@ pub fn set_autostart(enable: bool) -> Result<(), AppError> {
     }
 }
 
-/// 自動起動が現在有効かどうかを返す
 pub fn is_autostart_enabled() -> bool {
     unsafe {
         let key_wide = to_wide(RUN_KEY);

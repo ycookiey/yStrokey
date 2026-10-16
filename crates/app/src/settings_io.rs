@@ -52,7 +52,6 @@ unsafe fn get_path_from_dialog(dialog: &IFileDialog) -> Result<Option<PathBuf>, 
     Ok(Some(PathBuf::from(path_str)))
 }
 
-/// ファイル保存ダイアログで設定をエクスポート
 pub fn export_config(config: &AppConfig) -> Result<(), ystrokey_core::AppError> {
     unsafe {
         let _com = ComGuard::new();
@@ -72,7 +71,6 @@ pub fn export_config(config: &AppConfig) -> Result<(), ystrokey_core::AppError> 
     }
 }
 
-/// ファイル選択ダイアログで設定をインポート
 pub fn import_config() -> Result<Option<AppConfig>, ystrokey_core::AppError> {
     unsafe {
         let _com = ComGuard::new();
