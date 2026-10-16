@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -16,6 +17,21 @@ use ystrokey_core::{InputEvent, KeyAction, KeyCode, KeyEvent, LockStateEvent, Mo
 thread_local! {
     static HOOK_SENDER: std::cell::RefCell<Option<SyncSender<InputEvent>>> =
         const { std::cell::RefCell::new(None) };
+}
+
+/// イベントを送った後にWM_NULLを送るウィンドウ。メインループはメッセージが届くまで待つので、WM_NULLで起こす。0なら送らない
+static WAKE_HWND: AtomicIsize = AtomicIsize::new(0);
+pub fn set_wake_window(hwnd: HWND) {
+    WAKE_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
+}
+
+fn wake_main() {
+    let hwnd = WAKE_HWND.load(Ordering::Relaxed);
+    if hwnd != 0 {
+        unsafe {
+            let _ = PostMessageW(HWND(hwnd as *mut _), WM_NULL, WPARAM(0), LPARAM(0));
+        }
+    }
 }
 
 /// KBDLLHOOKSTRUCT からテンキーを区別して KeyCode に変換
@@ -206,6 +222,7 @@ unsafe extern "system" fn keyboard_hook_proc(
                 }
             }
         });
+        wake_main();
     }
     CallNextHookEx(None, code, wparam, lparam)
 }

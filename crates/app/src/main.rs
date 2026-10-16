@@ -22,7 +22,15 @@ use ystrokey_core::{
     AppConfig, ClipboardContent, ClipboardEvent, ConfigError, DiagnosticsLevel, DisplayState,
     GhostModifier, InputEvent, MenuLanguage,
 };
-use ystrokey_input::{install_keyboard_hook, is_privacy_target, poll_ime_state, ClipboardListener};
+use windows::Win32::Storage::FileSystem::{
+    FindFirstChangeNotificationW, FindNextChangeNotification, FILE_NOTIFY_CHANGE_FILE_NAME,
+    FILE_NOTIFY_CHANGE_LAST_WRITE,
+};
+use windows::Win32::System::Threading::INFINITE;
+use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
+use ystrokey_input::{
+    install_keyboard_hook, is_privacy_target, poll_ime_state, set_wake_window, ClipboardListener,
+};
 use ystrokey_render::{get_monitor_device_name, D2DRenderer, OsdWindow};
 
 use tray::{
@@ -65,6 +73,43 @@ struct RuntimeIntervals {
     frame_duration: Duration,
     ime_poll_interval: Duration,
     config_reload_interval: Duration,
+}
+
+/// フォアグラウンドウィンドウを判定し直すか。フォアグラウンドウィンドウか設定が変わった可能性があるときに立てる。
+/// 起動直後にも1回判定するため、初期値はtrue
+static FOREGROUND_DIRTY: AtomicBool = AtomicBool::new(true);
+
+/// キー入力とフォアグラウンドの切り替えの後、IMEの状態を読み続ける時間。
+/// ライブ変換のあるIMEは、キーの後しばらく待ってから変換し、未確定の文字列を書き換えるので、待ち時間と変換にかかる時間を見込む
+const IME_FOLLOW: Duration = Duration::from_secs(2);
+
+/// WINEVENT_OUTOFCONTEXTなので、メインスレッドのメッセージ処理の中で呼ばれる。
+/// 自分のウィンドウ（トレイのメニュー・設定ウィンドウ）への切り替えでも判定し直すため、自プロセスのイベントも受ける
+unsafe extern "system" fn on_foreground_event(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    _hwnd: HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    FOREGROUND_DIRTY.store(true, Ordering::SeqCst);
+}
+
+/// FindFirstChangeNotificationWはフォルダ単位でしか監視できないので、設定ファイルのあるフォルダを監視する。
+/// 設定の保存は一時ファイルからReplaceFileWで置き換えるので、書き込みに加えて名前の変更も拾う
+fn watch_directory(file: &Path) -> Option<HANDLE> {
+    let dir = file.parent()?;
+    let dir = HSTRING::from(dir.as_os_str());
+    unsafe {
+        FindFirstChangeNotificationW(
+            &dir,
+            false,
+            FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME,
+        )
+        .ok()
+    }
 }
 
 /// 致命的エラー時にメッセージボックスを表示して終了
@@ -338,7 +383,28 @@ fn main() {
     let (tx, rx) = mpsc::sync_channel::<InputEvent>(256);
     let _ = EVENT_TX.set(tx.clone());
 
+    set_wake_window(window.hwnd());
     let _hook_thread = install_keyboard_hook(tx.clone());
+
+    let config_watch = watch_directory(&config_path);
+    let foreground_hook = unsafe {
+        SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            Some(on_foreground_event),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        )
+    };
+    let poll_foreground = foreground_hook.is_invalid();
+    if poll_foreground {
+        logger::log(
+            DiagnosticsLevel::Warn,
+            "SetWinEventHook failed: checking the foreground window by polling instead",
+        );
+    }
 
     let _clipboard_listener = match ClipboardListener::new(window.hwnd()) {
         Ok(listener) => Some(listener),
@@ -354,9 +420,12 @@ fn main() {
     let mut msg = MSG::default();
     let mut last_ime_poll = Instant::now();
     let mut last_config_check = Instant::now();
+    let mut config_changed = false;
     let mut privacy_active = false;
     let mut was_rendering = false;
     let mut last_foreground_hwnd = HWND::default();
+    let mut last_foreground_poll = Instant::now();
+    let mut ime_follow_until: Option<Instant> = None;
 
     loop {
         unsafe {
@@ -463,6 +532,9 @@ fn main() {
                 }
                 other => {
                     if enabled && !privacy_active {
+                        if matches!(other, InputEvent::Key(_)) {
+                            ime_follow_until = Some(Instant::now() + IME_FOLLOW);
+                        }
                         state.process_event(other);
                     }
                 }
@@ -470,7 +542,13 @@ fn main() {
         }
 
         let now = Instant::now();
-        if now.duration_since(last_ime_poll) >= intervals.ime_poll_interval {
+        if poll_foreground && now.duration_since(last_foreground_poll) >= intervals.ime_poll_interval {
+            last_foreground_poll = now;
+            FOREGROUND_DIRTY.store(true, Ordering::SeqCst);
+        }
+        // 通知は遅れて届くことがあるので、通知の対象のウィンドウではなく今のフォアグラウンドウィンドウで判定する
+        if FOREGROUND_DIRTY.swap(false, Ordering::SeqCst) {
+            logger::log(DiagnosticsLevel::Debug, "foreground changed");
             let fg = unsafe { GetForegroundWindow() };
             if fg != last_foreground_hwnd {
                 last_foreground_hwnd = fg;
@@ -483,13 +561,24 @@ fn main() {
                     window.reposition_to_monitor(fg, &effective_config.display);
                 }
             }
-            if enabled && !privacy_active {
-                poll_ime_state(&tx);
+            ime_follow_until = Some(now + IME_FOLLOW);
+        }
+        if let Some(until) = ime_follow_until {
+            if now >= until {
+                ime_follow_until = None;
+            } else if now.duration_since(last_ime_poll) >= intervals.ime_poll_interval {
+                if enabled && !privacy_active {
+                    poll_ime_state(&tx);
+                }
+                last_ime_poll = now;
             }
-            last_ime_poll = now;
         }
 
-        if now.duration_since(last_config_check) >= intervals.config_reload_interval {
+        let config_due = match config_watch {
+            Some(_) => std::mem::take(&mut config_changed),
+            None => now.duration_since(last_config_check) >= intervals.config_reload_interval,
+        };
+        if config_due {
             match saved_config.check_reload(&config_path) {
                 Ok(Some(new_config)) => {
                     apply_config(
@@ -572,8 +661,36 @@ fn main() {
             was_rendering = has_any;
             std::thread::sleep(intervals.frame_duration);
         } else {
-            unsafe {
-                MsgWaitForMultipleObjects(None, false, 50, QS_ALLINPUT);
+            // 描画していない間は、メッセージ（キー入力とフォアグラウンドの切り替えを含む）か、設定フォルダの変更通知が届くまで待つ。
+            // タイムアウトを付けるのは、IMEかフォアグラウンドウィンドウを定期的に確かめている間と、設定の変更通知を作れなかったときだけ
+            let mut timeout = INFINITE;
+            if poll_foreground {
+                let next = intervals.ime_poll_interval.saturating_sub(last_foreground_poll.elapsed());
+                timeout = timeout.min(next.as_millis() as u32);
+            }
+            if ime_follow_until.is_some() {
+                let next = intervals.ime_poll_interval.saturating_sub(last_ime_poll.elapsed());
+                timeout = timeout.min(next.as_millis() as u32);
+            }
+            if config_watch.is_none() {
+                let next = intervals
+                    .config_reload_interval
+                    .saturating_sub(last_config_check.elapsed());
+                timeout = timeout.min(next.as_millis() as u32);
+            }
+            let mut handles: Vec<HANDLE> = Vec::with_capacity(1);
+            if let Some(h) = config_watch {
+                handles.push(h);
+            }
+            let woke = unsafe {
+                MsgWaitForMultipleObjectsEx(Some(&handles), timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE)
+            };
+            let index = woke.0.wrapping_sub(WAIT_OBJECT_0.0) as usize;
+            if index < handles.len() {
+                config_changed = true;
+                unsafe {
+                    let _ = FindNextChangeNotification(handles[index]);
+                }
             }
         }
     }
@@ -588,6 +705,8 @@ fn apply_config(
     intervals: &mut RuntimeIntervals,
 ) {
     apply_visual_config(config, state, renderer, window);
+    // プライバシーの対象のアプリが変わったかもしれないので、判定し直す
+    FOREGROUND_DIRTY.store(true, Ordering::SeqCst);
 
     intervals.frame_duration = Duration::from_millis(config.performance.frame_interval_ms);
     intervals.ime_poll_interval = Duration::from_millis(config.performance.ime_poll_interval_ms);
@@ -930,3 +1049,4 @@ fn key_name_to_vk(name: &str) -> Option<u32> {
     };
     Some(vk)
 }
+
