@@ -195,7 +195,7 @@ pub fn is_ime_open(hwnd: HWND) -> bool {
 
 /// IME状態をポーリングしてイベントを送信
 ///
-/// フォアグラウンドウィンドウのIME状態と変換中文字列をチェックし、
+/// 前面のウィンドウのIME状態と変換中文字列をチェックし、
 /// 前回から変化があった場合にイベントを送信する。
 pub fn poll_ime_state(tx: &SyncSender<InputEvent>) {
     thread_local! {

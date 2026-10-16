@@ -4,7 +4,7 @@
 pub struct KeyCode(pub u32);
 
 impl KeyCode {
-    // --- 数字キー (メインキーボード) ---
+    // --- 数字キー(メインキーボード) ---
     pub const KEY_0: Self = Self(0x30);
     pub const KEY_1: Self = Self(0x31);
     pub const KEY_2: Self = Self(0x32);
@@ -61,7 +61,7 @@ impl KeyCode {
     pub const NUMPAD_SUBTRACT: Self = Self(0x6D);
     pub const NUMPAD_DECIMAL: Self = Self(0x6E);
     pub const NUMPAD_DIVIDE: Self = Self(0x6F);
-    /// テンキーEnter（通常Enterと区別するため 0x200 | 0x0D）
+    /// テンキーEnter（通常Enterと区別するため0x200 | 0x0D）
     pub const NUMPAD_ENTER: Self = Self(0x200 | 0x0D);
 
     // --- 修飾キー ---

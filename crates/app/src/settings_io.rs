@@ -60,7 +60,7 @@ pub fn export_config(config: &AppConfig) -> Result<(), ystrokey_core::AppError> 
         let dialog: IFileSaveDialog =
             CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL).map_err(win32_err)?;
 
-        // IFileSaveDialog は IFileDialog を Deref で継承
+        // IFileSaveDialogはIFileDialogをDerefで継承
         setup_json_filter(&dialog)?;
         let _ = dialog.SetDefaultExtension(&HSTRING::from("json"));
         let _ = dialog.SetFileName(&HSTRING::from("ystrokey_config.json"));

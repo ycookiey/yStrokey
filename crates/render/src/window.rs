@@ -92,12 +92,12 @@ impl OsdWindow {
         self.height
     }
 
-    /// D2D BindDC 用にメモリDCを公開
+    /// D2D BindDC用にメモリDCを公開
     pub fn mem_dc(&self) -> HDC {
         self.mem_dc
     }
 
-    /// UpdateLayeredWindow で画面反映
+    /// UpdateLayeredWindowで画面反映
     pub fn present(&self, opacity: f32) {
         unsafe {
             let size = SIZE {
@@ -134,7 +134,7 @@ impl OsdWindow {
         }
     }
 
-    /// WS_EX_TRANSPARENT の動的切替
+    /// WS_EX_TRANSPARENTの動的切替
     pub fn set_interactive(&self, interactive: bool) {
         unsafe {
             let style = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
@@ -149,7 +149,7 @@ impl OsdWindow {
         }
     }
 
-    /// SetWindowDisplayAffinity でキャプチャ防止 (Win10 v2004+)
+    /// SetWindowDisplayAffinityでキャプチャ防止(Win10 v2004+)
     pub fn set_display_affinity(&self, exclude: bool) {
         unsafe {
             let affinity = if exclude {
@@ -256,8 +256,8 @@ impl OsdWindow {
                     )
                 };
 
-                // 保存済みの位置が古い場合や極端なオフセットでOSDが「消えて」しまわないよう、
-                // OSDウィンドウをモニターの作業領域内に収める。
+                // 保存済みの位置が古い場合や極端なオフセットでOSDが画面の外に出ないよう、
+                // OSDのウィンドウをモニターの作業領域の中に収める。
                 let min_x = work.left;
                 let max_x = (work.right - self.width).max(min_x);
                 let min_y = work.top;
@@ -320,7 +320,7 @@ fn create_bitmapinfo(width: i32, height: i32) -> BITMAPINFO {
     }
 }
 
-/// Position enum + work area から OSD の座標を計算
+/// Position enum + work areaからOSDの座標を計算
 fn compute_position(
     pos: &Position,
     work: &RECT,

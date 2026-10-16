@@ -25,7 +25,7 @@ pub struct DisplayState {
     ime_composing: bool,
     /// OSのIME APIから取得したネイティブ変換中表示か
     ime_native_composing: bool,
-    /// IME ON/OFF のフォールバック状態
+    /// IME ON/OFFのフォールバック状態
     ime_fallback_enabled: bool,
     /// IMEフォールバック用のローマ字バッファ
     ime_fallback_romaji: String,
@@ -221,7 +221,7 @@ impl DisplayState {
     }
 
     fn process_key_event(&mut self, ke: KeyEvent) {
-        // キーフィルター: 無視するキーを除外する (大文字小文字を区別せず、常に完全なラベルで比べる)
+        // キーフィルター: 無視するキーを除外する。大文字と小文字を区別せず、常に完全なラベルで比べる
         let full_label = ke.key.label();
         if self.config.behavior.ignored_keys.iter().any(|k| k.eq_ignore_ascii_case(full_label)) {
             return;
@@ -244,16 +244,16 @@ impl DisplayState {
 
         let now = ke.timestamp;
 
-        // 表示ラベル: distinguish_numpad に応じてテンキー区別を制御
+        // 表示ラベル: distinguish_numpadに応じてテンキー区別を制御
         let base_label = if self.config.behavior.distinguish_numpad {
             ke.key.label()
         } else {
             ke.key.label_plain()
         };
-        // 以下のキーは ToUnicodeEx 由来の実入力文字 (text) を優先表示する:
-        //   - OEM範囲 (VK 0xBA-0xE2): label() が "?" になる記号キー (`_` `\` 等)
-        //   - 数字行 (VK 0x30-0x39): Shift で記号に変わる (`Shift+2` → `"` 等)
-        // ショートカット判定や IME 関連は base_label / VK ベースのまま維持。
+        // 以下のキーはToUnicodeEx由来の実入力文字(text)を優先表示する:
+        //   - OEM範囲(VK 0xBA-0xE2): label()が "?" になる記号キー(`_` `\`等)
+        //   - 数字行(VK 0x30-0x39): Shiftで記号に変わる(`Shift+2` → `"`等)
+        // ショートカット判定やIME関連はbase_label / VKベースのまま維持。
         let prefer_text = {
             let vk = ke.key.0 & 0xFF;
             (0xBA..=0xE2).contains(&vk) || (0x30..=0x39).contains(&vk)
@@ -269,10 +269,10 @@ impl DisplayState {
         } else {
             base_label
         };
-        // text 優先キー（記号化される範囲）では Shift キーバッジを抑制する。
-        // Down だけでなく Up でも同様にしないと、Up側で `Shift+"` が出てしまう。
-        // Ctrl/Alt/Win は別の意味を持つので残す。
-        // 設定で Shift バッジ表示を有効化されているときは抑制しない。
+        // text優先キー（記号化される範囲）ではShiftキーバッジを抑制する。
+        // DownだけでなくUpでも同様にしないと、Up側で`Shift+"`が出てしまう。
+        // Ctrl/Alt/Winは別の意味を持つので残す。
+        // 設定でShiftバッジ表示を有効化されているときは抑制しない。
         let suppress_shift =
             prefer_text && !self.config.behavior.show_shift_for_typed_symbols;
         let display_modifiers = if suppress_shift {
@@ -334,7 +334,7 @@ impl DisplayState {
                     )
                 };
 
-                // 連打カウント（show_repeat_count が有効な場合のみ追跡）
+                // 連打カウント（show_repeat_countが有効な場合のみ追跡）
                 if self.config.behavior.key_transition_mode == KeyTransitionMode::SingleCell {
                     self.active_presses
                         .insert(PressKey::from_key_event(&ke), target);
@@ -628,7 +628,7 @@ impl DisplayState {
                         action: ref a,
                         repeat_count: ref rc,
                     } => {
-                        // KeyStroke → KeyStrokeGroup に昇格
+                        // KeyStroke → KeyStrokeGroupに昇格
                         let first = KeyStrokeEntry {
                             label: l.clone(),
                             modifiers: *m,
@@ -650,7 +650,7 @@ impl DisplayState {
                             grouped_target =
                                 Some(PressTarget::group(last_item.id, strokes.len() - 1));
                         }
-                        // max_group_size に達したら新行へ
+                        // max_group_sizeに達したら新行へ
                     }
                     _ => {}
                 }
@@ -798,7 +798,7 @@ impl DisplayState {
         const VK_OEM_3: u32 = 0xC0;
 
         let vk = ke.key.0 & 0xFF;
-        // 日本語キーボードの半角/全角は環境により VK が異なるため scan_code を最優先。
+        // 日本語キーボードの半角/全角は環境によりVKが異なるためscan_codeを最優先。
         let is_hankaku_zenkaku = ke.scan_code == 0x29 || (vk == VK_OEM_3 && ke.scan_code == 0x29);
 
         if !matches!(vk, VK_KANA | VK_IME_ON | VK_KANJI | VK_IME_OFF) && !is_hankaku_zenkaku {
@@ -957,7 +957,7 @@ fn should_suppress_during_ime_composition(ke: &KeyEvent) -> bool {
 }
 
 fn build_preview_items(config: &AppConfig, now: Instant) -> Vec<DisplayItem> {
-    // プレビュー項目は常に「アクティブ」でフェードしない。実際のOSD項目とは
+    // プレビュー項目は常にアクティブな状態のままでフェードしない。実際のOSD項目とは
     // 別に描画する。
     let mut items = Vec::new();
     let mut id = 1u64;

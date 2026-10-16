@@ -32,7 +32,7 @@ pub struct D2DRenderer {
     numpad_brush: ID2D1SolidColorBrush,
     lock_brush: ID2D1SolidColorBrush,
     count_brush: ID2D1SolidColorBrush,
-    // Ghost-mode 用ブラシ
+    // Ghost-mode用ブラシ
     ghost_bg_brush: ID2D1SolidColorBrush,
     ghost_border_brush: ID2D1SolidColorBrush,
     dpi_scale: f32,
@@ -80,7 +80,7 @@ impl D2DRenderer {
                 )
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
-            // ショートカットラベル用フォーマット (85%)
+            // ショートカットラベル用フォーマット(85%)
             let label_text_format = dwrite_factory
                 .CreateTextFormat(
                     PCWSTR(font_wide.as_ptr()),
@@ -93,7 +93,7 @@ impl D2DRenderer {
                 )
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
-            // 連打カウント用フォーマット (75%)
+            // 連打カウント用フォーマット(75%)
             let count_text_format = dwrite_factory
                 .CreateTextFormat(
                     PCWSTR(font_wide.as_ptr()),
@@ -106,12 +106,12 @@ impl D2DRenderer {
                 )
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
-            // テキストブラシ (StyleConfig.text_color)
+            // テキストブラシ(StyleConfig.text_color)
             let text_brush = render_target
                 .CreateSolidColorBrush(&parse_color(&style.text_color), None)
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
-            // Up状態テキストブラシ (#1565C0)
+            // Up状態テキストブラシ(#1565C0)
             let up_text_brush = render_target
                 .CreateSolidColorBrush(&parse_color("#1565C0"), None)
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
@@ -153,7 +153,7 @@ impl D2DRenderer {
                 .CreateSolidColorBrush(&parse_color("#FF9800"), None)
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
 
-            // Ghost-mode ブラシ: 暗めグレー背景 + 白枠線
+            // Ghost-modeブラシ: 暗めグレー背景 + 白枠線
             let ghost_bg_brush = render_target
                 .CreateSolidColorBrush(&parse_color("#1A1A1A"), None)
                 .map_err(|e: windows::core::Error| RenderError::CreateFailed(e.to_string()))?;
@@ -351,14 +351,14 @@ impl D2DRenderer {
             let spacing = 4.0_f32 * s;
             let size = self.render_target.GetSize();
 
-            // プレビュー項目 (上から下)。実際の項目が目立つよう先に描画する。
+            // プレビュー項目を上から下へ描画する。実際の項目が目立つよう、プレビュー項目を先に描画する。
             for (i, item) in preview_items.iter().enumerate() {
                 let top = (i as f32) * (line_height + spacing);
                 let bottom = top + line_height;
                 self.render_item_at(item, top, bottom, size.width, style);
             }
 
-            // 実際の項目 (下から上)。
+            // 実際の項目を下から上へ描画する。
             for (i, item) in live_items.iter().enumerate() {
                 let bottom = size.height - (i as f32) * (line_height + spacing);
                 let top = bottom - line_height;
@@ -871,7 +871,7 @@ impl D2DRenderer {
         }
     }
 
-    /// KeyStrokeEntry から背景ブラシを選択
+    /// KeyStrokeEntryから背景ブラシを選択
     fn select_entry_bg_brush(&self, entry: &KeyStrokeEntry) -> &ID2D1SolidColorBrush {
         if entry.label.starts_with("Num") {
             &self.numpad_brush
@@ -974,7 +974,7 @@ fn format_item_text(kind: &DisplayItemKind) -> String {
     }
 }
 
-/// KeyStrokeEntry のテキスト生成（修飾キー付き）
+/// KeyStrokeEntryのテキスト生成（修飾キー付き）
 fn format_entry_text(entry: &KeyStrokeEntry) -> String {
     let mut s = String::new();
     if entry.modifiers.ctrl {

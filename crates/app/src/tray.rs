@@ -151,7 +151,7 @@ pub fn show_context_menu(
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
 
-        // TrackPopupMenu が正しくメニューを閉じるために必須
+        // TrackPopupMenuが正しくメニューを閉じるために必須
         let _ = SetForegroundWindow(hwnd);
 
         let _ = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, pt.x, pt.y, 0, hwnd, None);

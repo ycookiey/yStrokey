@@ -4,7 +4,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 use ystrokey_core::config::PrivacyConfig;
 
-/// 前面ウィンドウのプロセスの実行ファイル名を取得する
+/// 前面のウィンドウのプロセスの実行ファイル名を取得する
 pub fn get_foreground_process_name() -> Option<String> {
     unsafe {
         let hwnd = GetForegroundWindow();

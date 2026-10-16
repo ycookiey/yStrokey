@@ -13,7 +13,7 @@ scoop install ystrokey
 
 ## ビルド
 
-必要な環境は、Windows 10/11とRustのツールチェーン(`stable-x86_64-pc-windows-msvc`)。
+必要な環境は、Windows 10/11とRustのツールチェーン`stable-x86_64-pc-windows-msvc`。
 
 ```bash
 cargo build --release
@@ -24,16 +24,16 @@ cargo build --release
 
 初回起動時に`config.json`を自動で生成する。`config.json`を編集して保存すると、再起動せずに設定が反映される。
 
-`config.json`は`%APPDATA%\ystrokey\config.json`に置く。環境変数`APPDATA`が空のときは、実行ファイルと同じフォルダに置く。ログは`%LOCALAPPDATA%\ystrokey\logs\`に出力する。
+`config.json`は`%APPDATA%\ystrokey\config.json`に置く。環境変数`APPDATA`が無いか空のときは、実行ファイルと同じフォルダに置く。ログは`%LOCALAPPDATA%\ystrokey\logs\`に出力する。
 
 主な設定項目:
 
-| キー | 説明 | デフォルト |
+| キー | 説明 | 既定値 |
 |------|------|-----------|
 | `display.position` | OSDを表示する位置 | `bottom-center` |
 | `display.max_items` | 同時に表示する項目の最大数 | `5` |
-| `display.display_duration_ms` | 項目を表示する時間 (ms) | `2000` |
-| `behavior.group_timeout_ms` | 連続入力を1グループにまとめる入力間隔の上限 (ms)。0でグループ化を無効にする | `300` |
+| `display.display_duration_ms` | 項目を表示する時間。単位はms | `2000` |
+| `behavior.group_timeout_ms` | 連続入力を1グループにまとめる入力間隔の上限。単位はms。0でグループ化を無効にする | `300` |
 | `behavior.max_group_size` | 1グループにまとめるキーの最大数 | `10` |
 | `behavior.pause_in_games` | ゲームが前面にある間、OSDの表示とキー入力の取得を止める | `true` |
 | `hotkey.toggle` | OSDの表示と非表示を切り替えるホットキー | `Ctrl+Alt+F12` |

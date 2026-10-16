@@ -24,16 +24,16 @@ thread_local! {
 /// イベントを送った後にWM_NULLを送るウィンドウ。メインループはメッセージが届くまで待つので、WM_NULLで起こす。0なら送らない
 static WAKE_HWND: AtomicIsize = AtomicIsize::new(0);
 static HOOK_WANTED: AtomicBool = AtomicBool::new(true);
-/// フックのスレッドのID（0はまだ起動していない）
+/// フックのスレッドのID。0ならスレッドはまだ起動していない
 static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
-/// フックのスレッドにHOOK_WANTEDを当て直させるスレッドメッセージ
+/// フックのスレッドに、HOOK_WANTEDの値に合わせてフックを付けさせるか外させるスレッドメッセージ
 const WM_APP_HOOK_SYNC: u32 = WM_APP + 0x10;
 
 pub fn set_wake_window(hwnd: HWND) {
     WAKE_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
 }
 
-/// キーボードのフックを付ける・外す。低レベルのフックを付けている間は、OSがすべてのキー入力でこのフックの応答を待つので、不要な間は外す
+/// キーボードのフックを付ける・外す。低レベルのフックを付けている間は、OSがすべてのキー入力でキーボードのフックの応答を待つので、不要な間は外す
 pub fn set_hook_enabled(enabled: bool) {
     HOOK_WANTED.store(enabled, Ordering::SeqCst);
     let tid = HOOK_THREAD_ID.load(Ordering::SeqCst);
@@ -53,7 +53,7 @@ fn wake_main() {
     }
 }
 
-/// KBDLLHOOKSTRUCT からテンキーを区別して KeyCode に変換
+/// KBDLLHOOKSTRUCTからテンキーを区別してKeyCodeに変換
 fn to_key_code(kb: &KBDLLHOOKSTRUCT) -> KeyCode {
     let vk = kb.vkCode;
     let scan = kb.scanCode;
@@ -62,12 +62,12 @@ fn to_key_code(kb: &KBDLLHOOKSTRUCT) -> KeyCode {
     match vk {
         // テンキーの0-9
         0x60..=0x69 => KeyCode(vk),
-        // Numpad演算子 (*, +, separator, -, ., /)
+        // Numpad演算子(*, +, separator, -, ., /)
         0x6A..=0x6F => KeyCode(vk),
         // Enter: extendedならテンキーのEnter
         0x0D if extended => KeyCode::NUMPAD_ENTER,
         0x0D => KeyCode::ENTER,
-        // NumLockオフ時: スキャンコード 0x47-0x53 で非extended → テンキー由来
+        // NumLockオフ時: スキャンコード0x47-0x53で非extended → テンキー由来
         _ if (0x47..=0x53).contains(&scan) && !extended => numpad_scan_to_key(scan),
         _ => KeyCode(vk),
     }
@@ -91,7 +91,7 @@ fn numpad_scan_to_key(scan: u32) -> KeyCode {
     }
 }
 
-/// GetAsyncKeyState で現在の修飾キー状態を取得
+/// GetAsyncKeyStateで現在の修飾キー状態を取得
 fn get_current_modifiers() -> Modifiers {
     unsafe {
         Modifiers {
@@ -107,11 +107,11 @@ fn get_current_modifiers() -> Modifiers {
     }
 }
 
-/// VK と scan_code から実入力文字を取得する。
-/// LL hook では呼出スレッドがキーボードフォーカスを持たないため、
-/// `GetKeyboardState` ではなく `GetAsyncKeyState` から状態を再構築する。
-/// `ToUnicodeEx`のflagsのbit 2（値4）は、キーボードの内部状態（デッドキーのバッファ）を
-/// 変えない指定（Windows 10 1607以降）。bit 1（値2）は離したキーも文字に変える別の指定。
+/// VKとscan_codeから実入力文字を取得する。
+/// 低レベルのフックでは呼出スレッドがキーボードフォーカスを持たないため、
+/// `GetKeyboardState`ではなく`GetAsyncKeyState`から状態を再構築する。
+/// `ToUnicodeEx`のflagsに渡す値4は、キーボードの内部状態であるデッドキーのバッファを
+/// 変えない指定で、Windows 10 1607以降で使える。値2は、押したキーだけでなく離したキーも文字に変える別の指定。
 fn resolve_text(vk: u32, scan_code: u32) -> Option<String> {
     unsafe {
         let mut ks = [0u8; 256];
@@ -140,7 +140,7 @@ fn resolve_text(vk: u32, scan_code: u32) -> Option<String> {
             ks[VK_CAPITAL.0 as usize] = 0x01;
         }
 
-        // 前景ウィンドウのキーボードレイアウトを使う（JIS/US 等を反映）
+        // 前面のウィンドウのキーボードレイアウトを使う（JIS/US等を反映）
         let fg = GetForegroundWindow();
         let tid = GetWindowThreadProcessId(fg, None);
         let hkl = GetKeyboardLayout(tid);
@@ -172,7 +172,7 @@ fn is_numpad_key(kb: &KBDLLHOOKSTRUCT) -> bool {
     if vk == 0x0D && extended {
         return true;
     }
-    // NumLockオフ時のスキャンコード範囲 (非extended)
+    // NumLockオフ時のスキャンコード範囲(非extended)
     if (0x47..=0x53).contains(&scan) && !extended {
         return true;
     }
@@ -180,7 +180,7 @@ fn is_numpad_key(kb: &KBDLLHOOKSTRUCT) -> bool {
 }
 
 
-/// ロックキー (CapsLock/NumLock/ScrollLock)
+/// CapsLock・NumLock・ScrollLockのロックキー
 fn is_lock_key(vk: u32) -> bool {
     vk == VK_CAPITAL.0 as u32 || vk == VK_NUMLOCK.0 as u32 || vk == VK_SCROLL.0 as u32
 }
@@ -213,7 +213,7 @@ unsafe extern "system" fn keyboard_hook_proc(
 
         let key_code = to_key_code(kb);
         let modifiers = get_current_modifiers();
-        // Down時のみ実文字を解決（Up は不要、デッドキー副作用を避ける意味でも限定）
+        // Down時のみ実文字を解決（Upは不要、デッドキー副作用を避ける意味でも限定）
         let text = if action == KeyAction::Down {
             resolve_text(kb.vkCode, kb.scanCode)
         } else {
@@ -277,10 +277,10 @@ pub fn run_hook_thread(tx: SyncSender<InputEvent>) {
         let mut msg = MSG::default();
         let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
         HOOK_THREAD_ID.store(GetCurrentThreadId(), Ordering::SeqCst);
-        // IDを公開した後にHOOK_WANTEDを読むので、公開の前に変わった値も取りこぼさない
+        // IDを公開した後にHOOK_WANTEDを読むので、公開の前に変わった値を取りこぼさない
         sync(&mut kb_hook);
 
-        // LL hookはメッセージループが必須
+        // 低レベルのフックはメッセージループが必須
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             if msg.hwnd.0.is_null() && msg.message == WM_APP_HOOK_SYNC {
                 sync(&mut kb_hook);

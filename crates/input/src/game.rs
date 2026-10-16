@@ -2,7 +2,7 @@
 //!
 //! 一覧は`HKCU\System\GameConfigStore\Children`にある。実行ファイルのパス（`MatchedExeFullPath`）を
 //! 持つ項目だけを使う。パスの無い項目は、前面のプロセスと照合できない。
-//! このレジストリのキーは文書化されていないので、読めないときはどのアプリもゲームとみなさず、OSDを止めない。
+//! `HKCU\System\GameConfigStore\Children`は文書化されていないので、読めないときはどのアプリもゲームとみなさず、OSDを止めない。
 
 use std::collections::HashSet;
 
@@ -24,7 +24,7 @@ use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThre
 
 const CHILDREN: PCWSTR = w!("System\\GameConfigStore\\Children");
 
-/// ゲームの実行ファイルのパス（実体のパスを小文字にしたもの）
+/// ゲームの実行ファイルの実体のパスを小文字にした文字列
 pub struct GameList {
     paths: HashSet<String>,
     notify_key: Option<HKEY>,
@@ -58,7 +58,7 @@ impl GameList {
     }
 
     /// 一覧が変わったら`event`をシグナル状態にするよう登録する。通知は1回きりなので、通知のたびに登録し直す。
-    /// 登録できなければfalseを返す。そのときの一覧は、読み込んだときのまま使う。
+    /// 登録できなければfalseを返す。登録できなかったときは、一覧を読み込んだときのまま使う。
     pub fn watch(&self, event: HANDLE) -> bool {
         let Some(key) = self.notify_key else {
             return false;

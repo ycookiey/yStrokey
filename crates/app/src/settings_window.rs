@@ -146,7 +146,7 @@ fn should_request_preview(changed_control_id: u16) -> bool {
             | ID_STYLE_SHORTCUT_COLOR
             | ID_STYLE_KEY_DOWN_COLOR
             | ID_STYLE_OPACITY
-            // 動作 (表示に影響する項目)
+            // 動作。表示に影響する項目
             | ID_BEHAVIOR_KEY_TRANSITION_MODE
             | ID_BEHAVIOR_SHOW_REPEAT_COUNT
             | ID_BEHAVIOR_DISTINGUISH_NUMPAD
@@ -155,10 +155,10 @@ fn should_request_preview(changed_control_id: u16) -> bool {
             | ID_BEHAVIOR_SHOW_CLIPBOARD
             | ID_BEHAVIOR_CLIPBOARD_MAX_CHARS
             | ID_BEHAVIOR_SHOW_LOCK
-            // 性能 (OSDのサイズ)
+            // 性能。OSDのサイズ
             | ID_PERF_OSD_WIDTH
             | ID_PERF_OSD_HEIGHT
-            // アニメーション (見た目の項目)
+            // アニメーション。見た目の項目
             | ID_ANIM_GHOST_MODIFIER
             | ID_ANIM_GHOST_THRESHOLD
             | ID_ANIM_GHOST_MAX_OPACITY
@@ -169,9 +169,9 @@ fn should_request_preview(changed_control_id: u16) -> bool {
 fn should_live_preview_on_change(changed_control_id: u16) -> bool {
     matches!(
         changed_control_id,
-        // 表示 (位置)
+        // 表示。位置
         ID_DISPLAY_OFFSET_X | ID_DISPLAY_OFFSET_Y
-        // スタイル (見た目の編集はほとんどが即座に反映しても安全)
+        // スタイル。見た目の編集は、ほとんどを即座に反映しても安全
         | ID_STYLE_FONT_FAMILY
             | ID_STYLE_FONT_SIZE
             | ID_STYLE_TEXT_COLOR
@@ -181,7 +181,7 @@ fn should_live_preview_on_change(changed_control_id: u16) -> bool {
             | ID_STYLE_SHORTCUT_COLOR
             | ID_STYLE_KEY_DOWN_COLOR
             | ID_STYLE_OPACITY
-        // アニメーション (見た目の項目)
+        // アニメーション。見た目の項目
         | ID_ANIM_GHOST_THRESHOLD
             | ID_ANIM_GHOST_MAX_OPACITY
     )

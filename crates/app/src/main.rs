@@ -41,27 +41,27 @@ use tray::{
 
 const HOTKEY_TOGGLE_ID: i32 = 1;
 
-/// wnd_proc からイベント送信用のグローバルチャネル
+/// wnd_procからイベント送信用のグローバルチャネル
 static EVENT_TX: OnceLock<SyncSender<InputEvent>> = OnceLock::new();
 
-/// OSD 有効/無効（トレイメニューから切替）
+/// OSD有効/無効（トレイメニューから切替）
 static OSD_ENABLED: AtomicBool = AtomicBool::new(true);
 
-/// 設定ファイルパス（wnd_proc からアクセス用）
+/// 設定ファイルパス（wnd_procからアクセス用）
 static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
-/// 現在の設定（wnd_proc からアクセス用）
+/// 現在の設定（wnd_procからアクセス用）
 static CURRENT_CONFIG: OnceLock<Mutex<AppConfig>> = OnceLock::new();
 
-/// Ghost-mode でインタラクティブ状態かどうか（ドラッグ判定用）
+/// Ghost-modeでインタラクティブ状態かどうか（ドラッグ判定用）
 static GHOST_INTERACTIVE: AtomicBool = AtomicBool::new(false);
 
-// クリップボード重複検知用（wnd_proc はメインスレッドのみで呼ばれる）
+// クリップボード重複検知用（wnd_procはメインスレッドのみで呼ばれる）
 thread_local! {
     static LAST_CLIPBOARD: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
-/// WM_CLIPBOARDUPDATE (Windows Vista以降)
+/// WM_CLIPBOARDUPDATE。Windows Vista以降で使える
 const WM_CLIPBOARD_UPDATE: u32 = 0x031D;
 
 enum ApplyReason {
@@ -76,16 +76,17 @@ struct RuntimeIntervals {
     config_reload_interval: Duration,
 }
 
-/// フォアグラウンドウィンドウを判定し直すか。フォアグラウンドウィンドウ・ゲームの一覧・設定が変わった可能性があるときに立てる。
+/// 前面のウィンドウがゲームか、プライバシーの対象のアプリかを判定し直し、OSDを前面のウィンドウのモニターに移し、IMEの状態を読み始めるか。
+/// 前面のウィンドウ・ゲームの一覧・設定が変わった可能性があるときに立てる。
 /// 起動直後にも1回判定するため、初期値はtrue
 static FOREGROUND_DIRTY: AtomicBool = AtomicBool::new(true);
 
-/// キー入力とフォアグラウンドの切り替えの後、IMEの状態を読み続ける時間。
+/// キー入力と前面のウィンドウの切り替えの後、IMEの状態を読み続ける時間。
 /// ライブ変換のあるIMEは、キーの後しばらく待ってから変換し、未確定の文字列を書き換えるので、待ち時間と変換にかかる時間を見込む
 const IME_FOLLOW: Duration = Duration::from_secs(2);
 
 /// WINEVENT_OUTOFCONTEXTなので、メインスレッドのメッセージ処理の中で呼ばれる。
-/// 自分のウィンドウ（トレイのメニュー・設定ウィンドウ）への切り替えでも判定し直すため、自プロセスのイベントも受ける
+/// トレイのメニューや設定ウィンドウなど、自分のウィンドウへの切り替えでも判定し直すため、ほかのプロセスだけでなく自プロセスのイベントも受ける
 unsafe extern "system" fn on_foreground_event(
     _hook: HWINEVENTHOOK,
     _event: u32,
@@ -569,14 +570,14 @@ fn main() {
             last_foreground_poll = now;
             FOREGROUND_DIRTY.store(true, Ordering::SeqCst);
         }
-        // 通知は遅れて届くことがあるので、通知の対象のウィンドウではなく今のフォアグラウンドウィンドウで判定する
+        // 通知は遅れて届くことがあるので、通知の対象のウィンドウではなく今の前面のウィンドウで判定する
         if FOREGROUND_DIRTY.swap(false, Ordering::SeqCst) {
             let game = saved_config.behavior.pause_in_games && games.foreground_is_game();
             logger::log(DiagnosticsLevel::Debug, &format!("foreground changed: game={game}"));
             if game != in_game {
                 in_game = game;
                 set_hook_enabled(!game);
-                // フックを外すとキーを離したイベントが届かないので、押されたままの表示（Alt+TabのAltなど）を消しておく
+                // フックを外すとキーを離したイベントが届かないので、Alt+TabのAltのように、押されたまま表示しているキーを消しておく
                 state.clear();
                 logger::log(
                     DiagnosticsLevel::Info,
@@ -695,8 +696,8 @@ fn main() {
             was_rendering = has_any;
             std::thread::sleep(intervals.frame_duration);
         } else {
-            // 描画していない間は、メッセージ（キー入力とフォアグラウンドの切り替えを含む）か、設定フォルダ・ゲームの一覧の変更通知が届くまで待つ。
-            // タイムアウトを付けるのは、IMEかフォアグラウンドウィンドウを定期的に確かめている間と、設定の変更通知を作れなかったときだけ
+            // 描画していない間は、キー入力と前面のウィンドウの切り替えを含むメッセージか、設定フォルダ・ゲームの一覧の変更通知が届くまで待つ。
+            // タイムアウトを付けるのは、IMEか前面のウィンドウを定期的に確認している間と、設定の変更通知を作れなかったときだけ
             let mut timeout = INFINITE;
             if poll_foreground {
                 let next = intervals.ime_poll_interval.saturating_sub(last_foreground_poll.elapsed());
@@ -799,7 +800,7 @@ fn apply_visual_config(
         window.resize(config.performance.osd_width, config.performance.osd_height);
     }
 
-    // 表示設定は、設定ウィンドウで調整している間も即座に反映する。
+    // 見た目の設定は、設定ウィンドウで調整している間も即座に反映する。
     unsafe {
         let fg = GetForegroundWindow();
         if !fg.0.is_null() {
@@ -812,7 +813,7 @@ fn merge_preview_config(base: &AppConfig, draft: &AppConfig) -> AppConfig {
     // 実行時の値など表示に関係しない項目は、古い下書きの値で上書きしないよう`base`の値をそのまま使う。
     let mut cfg = base.clone();
 
-    // 表示 (モニターごとの保存済み位置は`base`の値を使う)。
+    // 表示。モニターごとの保存済みの位置は`base`の値を使う。
     cfg.display.position = draft.display.position;
     cfg.display.offset_x = draft.display.offset_x;
     cfg.display.offset_y = draft.display.offset_y;
@@ -820,10 +821,10 @@ fn merge_preview_config(base: &AppConfig, draft: &AppConfig) -> AppConfig {
     cfg.display.display_duration_ms = draft.display.display_duration_ms;
     cfg.display.fade_duration_ms = draft.display.fade_duration_ms;
 
-    // スタイル (すべて見た目の項目)。
+    // スタイル。すべて見た目の項目。
     cfg.style = draft.style.clone();
 
-    // 動作 (表示に影響する項目のみ)。
+    // 動作。表示に影響する項目だけ。
     cfg.behavior.key_transition_mode = draft.behavior.key_transition_mode;
     cfg.behavior.show_repeat_count = draft.behavior.show_repeat_count;
     cfg.behavior.distinguish_numpad = draft.behavior.distinguish_numpad;
@@ -833,27 +834,27 @@ fn merge_preview_config(base: &AppConfig, draft: &AppConfig) -> AppConfig {
     cfg.behavior.clipboard_max_chars = draft.behavior.clipboard_max_chars;
     cfg.behavior.show_lock_indicators = draft.behavior.show_lock_indicators;
 
-    // 性能 (OSDのサイズ)。
+    // 性能。OSDのサイズ。
     cfg.performance.osd_width = draft.performance.osd_width;
     cfg.performance.osd_height = draft.performance.osd_height;
 
-    // アニメーション (見た目の項目)。
+    // アニメーション。見た目の項目。
     cfg.animation = draft.animation.clone();
 
     cfg
 }
 
-/// `%<var>%\ystrokey`を返す。設定とログを実行ファイルの横ではなくユーザーのフォルダに置くのは、
-/// Scoopなどのパッケージマネージャーが版ごとに別のフォルダへインストールし、
-/// 実行ファイルの横のファイルが更新のたびに古い版のフォルダに残されるため
+/// `%<var>%\ystrokey`を返す。設定とログを実行ファイルと同じフォルダではなくユーザーのフォルダに置くのは、
+/// Scoopなどのパッケージマネージャーがバージョンごとに別のフォルダへインストールし、
+/// 実行ファイルと同じフォルダのファイルが更新のたびに古いバージョンのフォルダに残されるため
 fn user_dir(var: &str) -> Option<PathBuf> {
     std::env::var_os(var)
         .filter(|v| !v.is_empty())
         .map(|v| PathBuf::from(v).join("ystrokey"))
 }
 
-/// 実行ファイルの横の設定ファイル`from`を`to`に写す。`to`がすでにあれば写さない。
-/// 実行ファイルの横で設定を読む古い版も動かせるよう、`from`は消さない。写したかを返す
+/// 実行ファイルと同じフォルダの設定ファイル`from`を`to`にコピーする。`to`がすでにあればコピーしない。
+/// 実行ファイルと同じフォルダで設定を読む古いバージョンを動かせるよう、`from`は消さない。コピーしたかを返す
 fn migrate_legacy_config(from: &Path, to: &Path) -> std::io::Result<bool> {
     if from == to || to.exists() || !from.exists() {
         return Ok(false);
@@ -921,7 +922,7 @@ fn backup_invalid_config(config_path: &Path) -> Result<PathBuf, std::io::Error> 
     Ok(backup_path)
 }
 
-/// 修飾キーとカーソルの距離からゴーストの不透明度を決める。
+/// 修飾キーが押されているかと、カーソルからOSDのウィンドウまでの距離から、ゴーストの不透明度を決める。
 fn calculate_ghost_opacity(window: &OsdWindow, config: &AppConfig) -> f32 {
     unsafe {
         let modifier_down = match config.animation.ghost_modifier {
@@ -947,7 +948,7 @@ fn calculate_ghost_opacity(window: &OsdWindow, config: &AppConfig) -> f32 {
     }
 }
 
-/// カーソルから矩形までの距離 (矩形の内側にあるときは0)。
+/// カーソルから矩形までの距離。カーソルが矩形の内側にあるときは0。
 fn distance_to_rect(cursor: &POINT, rect: &RECT) -> f32 {
     let dx = if cursor.x < rect.left {
         rect.left - cursor.x

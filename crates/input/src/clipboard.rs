@@ -8,8 +8,8 @@ use windows::Win32::System::Ole::CF_UNICODETEXT;
 
 /// クリップボード変更リスナー
 ///
-/// `AddClipboardFormatListener` で登録し、Drop時に `RemoveClipboardFormatListener` で解除。
-/// WM_CLIPBOARDUPDATE メッセージで変更通知を受信する。
+/// `AddClipboardFormatListener`で登録し、Drop時に`RemoveClipboardFormatListener`で解除。
+/// WM_CLIPBOARDUPDATEメッセージで変更通知を受信する。
 pub struct ClipboardListener {
     hwnd: HWND,
 }
@@ -34,7 +34,7 @@ impl ClipboardListener {
                 return None;
             }
 
-            // CloseClipboard を確実に呼ぶため、クロージャで本体を実行
+            // CloseClipboardを確実に呼ぶため、クロージャで本体を実行
             let result = (|| -> Option<String> {
                 let handle = GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?;
                 let hglobal = HGLOBAL(handle.0);

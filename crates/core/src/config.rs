@@ -83,10 +83,10 @@ pub struct BehaviorConfig {
     pub max_group_size: usize,
     pub ignored_keys: Vec<String>,
     pub exclude_from_capture: bool,
-    /// 数字行・OEM 記号キーで Shift 押下時、Shift バッジを表示するか。
-    /// false (default) なら `Shift+2` 入力で `"` 単独表示、
-    /// true なら従来どおり `Shift+"` 表示。
-    /// 既存 config 互換のため serde default。
+    /// 数字行・OEM記号キーでShift押下時、Shiftバッジを表示するか。
+    /// false (default)なら`Shift+2`入力で`"`単独表示、
+    /// trueなら従来どおり`Shift+"`表示。
+    /// 既存config互換のためserde default。
     #[serde(default)]
     pub show_shift_for_typed_symbols: bool,
     /// ゲームが前面にある間は、OSDの表示とキー入力の取得を止める
