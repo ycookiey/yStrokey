@@ -82,7 +82,7 @@ struct RuntimeIntervals {
 static FOREGROUND_DIRTY: AtomicBool = AtomicBool::new(true);
 
 /// キー入力と前面のウィンドウの切り替えの後、IMEの状態を読み続ける時間。
-/// ライブ変換のあるIMEは、キーの後しばらく待ってから変換し、未確定の文字列を書き換えるので、待ち時間と変換にかかる時間を見込む
+/// キー入力からしばらく待って自動で変換し、未確定の文字列を書き換えるIMEがあるので、IMEの待ち時間と変換にかかる時間を見込む
 const IME_FOLLOW: Duration = Duration::from_secs(2);
 
 /// WINEVENT_OUTOFCONTEXTなので、メインスレッドのメッセージ処理の中で呼ばれる。
