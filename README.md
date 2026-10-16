@@ -1,6 +1,6 @@
 # yStrokey
 
-押したキーを画面に表示する、Windowsのオンスクリーンディスプレイ(OSD)ツール。打ったキーが意図どおりかを確かめたい人や、配信・録画・解説で押したキーを見せたい人に向けている。
+押したキーを画面に表示する、Windowsのオンスクリーンディスプレイ(OSD)ツール。押したキーが意図どおりかを確かめたい人や、配信・録画・解説で押したキーを見せたい人に向けている。
 
 ## 特徴
 
@@ -17,7 +17,7 @@
 
 ```powershell
 scoop bucket add yscoopy https://github.com/ycookiey/yscoopy
-scoop install ystrokey
+scoop install yscoopy/ystrokey
 ```
 
 `ystrokey`を起動すると、タスクトレイにアイコンが出る。アイコンを右クリックし、メニューの「設定」から設定ウィンドウを開く。設定は`%APPDATA%\ystrokey\config.json`に保存され、`config.json`を直接編集してもよい。
