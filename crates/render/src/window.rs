@@ -35,7 +35,7 @@ impl OsdWindow {
                 ..Default::default()
             };
             RegisterClassExW(&wc);
-            // Primary monitor work area
+            // プライマリモニターの作業領域
             let (x, y) = get_primary_monitor_position(width, height, display_config);
 
             let ex_style = WS_EX_LAYERED
@@ -220,7 +220,7 @@ impl OsdWindow {
         self.set_position(suggested_rect.left, suggested_rect.top);
     }
 
-    /// Reposition OSD to the monitor of the target window.
+    /// OSDを対象ウィンドウのあるモニターに移動する。
     /// 保存済み位置があればそれを使用し、なければDisplayConfigの設定で計算。
     pub fn reposition_to_monitor(
         &self,
@@ -256,8 +256,8 @@ impl OsdWindow {
                     )
                 };
 
-                // Keep the OSD window within the monitor work area so it can't "disappear"
-                // due to stale saved positions or extreme offsets.
+                // 保存済みの位置が古い場合や極端なオフセットでOSDが「消えて」しまわないよう、
+                // OSDウィンドウをモニターの作業領域内に収める。
                 let min_x = work.left;
                 let max_x = (work.right - self.width).max(min_x);
                 let min_y = work.top;
@@ -344,7 +344,7 @@ fn compute_position(
     (base_x + offset_x, base_y + offset_y)
 }
 
-/// Compute initial OSD position from primary monitor work area
+/// プライマリモニターの作業領域からOSDの初期位置を計算する
 unsafe fn get_primary_monitor_position(width: i32, height: i32, display_config: &DisplayConfig) -> (i32, i32) {
     let pt = POINT { x: 0, y: 0 };
     let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);

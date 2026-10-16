@@ -60,11 +60,11 @@ fn to_key_code(kb: &KBDLLHOOKSTRUCT) -> KeyCode {
     let extended = (kb.flags.0 & 0x01) != 0; // LLKHF_EXTENDED
 
     match vk {
-        // Numpad 0-9
+        // テンキーの0-9
         0x60..=0x69 => KeyCode(vk),
         // Numpad演算子 (*, +, separator, -, ., /)
         0x6A..=0x6F => KeyCode(vk),
-        // Enter: extended = Numpad Enter
+        // Enter: extendedならテンキーのEnter
         0x0D if extended => KeyCode::NUMPAD_ENTER,
         0x0D => KeyCode::ENTER,
         // NumLockオフ時: スキャンコード 0x47-0x53 で非extended → テンキー由来
@@ -168,7 +168,7 @@ fn is_numpad_key(kb: &KBDLLHOOKSTRUCT) -> bool {
     if (0x60..=0x6F).contains(&vk) {
         return true;
     }
-    // Numpad Enter (VK_RETURN + extended)
+    // テンキーのEnter (VK_RETURN + extended)
     if vk == 0x0D && extended {
         return true;
     }
@@ -180,12 +180,12 @@ fn is_numpad_key(kb: &KBDLLHOOKSTRUCT) -> bool {
 }
 
 
-/// Lock key (CapsLock/NumLock/ScrollLock)
+/// ロックキー (CapsLock/NumLock/ScrollLock)
 fn is_lock_key(vk: u32) -> bool {
     vk == VK_CAPITAL.0 as u32 || vk == VK_NUMLOCK.0 as u32 || vk == VK_SCROLL.0 as u32
 }
 
-/// Get current lock state
+/// 現在のロック状態を取得する
 fn get_lock_state_event() -> LockStateEvent {
     unsafe {
         LockStateEvent {
@@ -234,7 +234,7 @@ unsafe extern "system" fn keyboard_hook_proc(
         HOOK_SENDER.with(|cell| {
             if let Some(ref tx) = *cell.borrow() {
                 let _ = tx.try_send(event);
-                // Lock key: send toggle state on WM_KEYUP
+                // ロックキー: WM_KEYUP時にトグル状態を送る
                 if action == KeyAction::Up && is_lock_key(kb.vkCode) {
                     let lock_event = InputEvent::LockState(get_lock_state_event());
                     let _ = tx.try_send(lock_event);

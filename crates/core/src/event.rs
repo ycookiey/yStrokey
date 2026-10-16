@@ -18,7 +18,7 @@ pub enum InputEvent {
     /// DPI変更通知 (モニタ移動等)
     DpiChanged {
         dpi: u32,
-        /// suggested rect [left, top, right, bottom]
+        /// 推奨される矩形 [left, top, right, bottom]
         suggested_rect: [i32; 4],
     },
     /// 設定がインポート等で外部から変更された通知

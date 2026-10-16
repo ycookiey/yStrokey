@@ -10,7 +10,7 @@ use crate::error::ConfigError;
 
 pub const SCHEMA_VERSION: u32 = 2;
 
-/// Strict configuration schema for the app.
+/// アプリの設定を表す厳密なスキーマ。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
@@ -58,7 +58,7 @@ pub enum Position {
 pub struct StyleConfig {
     pub font_family: String,
     pub font_size: f32,
-    /// "#RRGGBB" or "#RRGGBBAA"
+    /// "#RRGGBB"または"#RRGGBBAA"形式
     pub text_color: String,
     pub background_color: String,
     pub border_radius: f32,
@@ -500,7 +500,7 @@ impl AppConfig {
 
         if config_path.exists() {
             if let Err(replace_err) = replace_file(config_path, &tmp_path) {
-                // Fallback for environments where ReplaceFileW returns ACCESS_DENIED.
+                // ReplaceFileWがACCESS_DENIEDを返す環境向けの代替処理。
                 let direct_write = (|| -> Result<(), std::io::Error> {
                     let mut file = File::create(config_path)?;
                     file.write_all(json.as_bytes())?;

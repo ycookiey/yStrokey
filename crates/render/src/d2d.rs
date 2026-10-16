@@ -351,14 +351,14 @@ impl D2DRenderer {
             let spacing = 4.0_f32 * s;
             let size = self.render_target.GetSize();
 
-            // Preview items (top-down). Render first so live items stay visually dominant.
+            // プレビュー項目 (上から下)。実際の項目が目立つよう先に描画する。
             for (i, item) in preview_items.iter().enumerate() {
                 let top = (i as f32) * (line_height + spacing);
                 let bottom = top + line_height;
                 self.render_item_at(item, top, bottom, size.width, style);
             }
 
-            // Live items (bottom-up).
+            // 実際の項目 (下から上)。
             for (i, item) in live_items.iter().enumerate() {
                 let bottom = size.height - (i as f32) * (line_height + spacing);
                 let top = bottom - line_height;

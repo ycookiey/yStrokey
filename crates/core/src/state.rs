@@ -221,7 +221,7 @@ impl DisplayState {
     }
 
     fn process_key_event(&mut self, ke: KeyEvent) {
-        // Key filter: skip ignored keys (case-insensitive, always use full label)
+        // キーフィルター: 無視するキーを除外する (大文字小文字を区別せず、常に完全なラベルで比べる)
         let full_label = ke.key.label();
         if self.config.behavior.ignored_keys.iter().any(|k| k.eq_ignore_ascii_case(full_label)) {
             return;
@@ -561,7 +561,7 @@ impl DisplayState {
         self.rebuild_preview_items(now);
     }
 
-    // --- private helpers ---
+    // --- 内部ヘルパー ---
 
     fn add_item(&mut self, kind: DisplayItemKind, now: Instant) -> u64 {
         let item_id = self.next_id;
@@ -957,8 +957,8 @@ fn should_suppress_during_ime_composition(ke: &KeyEvent) -> bool {
 }
 
 fn build_preview_items(config: &AppConfig, now: Instant) -> Vec<DisplayItem> {
-    // Preview items are always "active" and do not fade; they are rendered separately
-    // from live OSD items.
+    // プレビュー項目は常に「アクティブ」でフェードしない。実際のOSD項目とは
+    // 別に描画する。
     let mut items = Vec::new();
     let mut id = 1u64;
     let opacity = 0.85;

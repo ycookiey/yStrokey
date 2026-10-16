@@ -61,7 +61,7 @@ thread_local! {
     static LAST_CLIPBOARD: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
-/// WM_CLIPBOARDUPDATE (Windows Vista+)
+/// WM_CLIPBOARDUPDATE (Windows Vista以降)
 const WM_CLIPBOARD_UPDATE: u32 = 0x031D;
 
 enum ApplyReason {
@@ -683,8 +683,8 @@ fn main() {
                     renderer.update_dpi(window.dpi);
                 }
             }
-            // While settings preview is active, keep the window slightly visible so the user
-            // can recover even if they temporarily set opacity to 0.
+            // 設定プレビュー中は、ユーザーが不透明度を一時的に0にしても元に戻せるよう、
+            // ウィンドウをわずかに表示したままにする。
             let present_opacity = if state.preview_active() {
                 effective_config.style.opacity.max(0.05)
             } else {
@@ -799,7 +799,7 @@ fn apply_visual_config(
         window.resize(config.performance.osd_width, config.performance.osd_height);
     }
 
-    // Display settings should apply immediately (e.g. while tweaking in Settings).
+    // 表示設定は、設定ウィンドウで調整している間も即座に反映する。
     unsafe {
         let fg = GetForegroundWindow();
         if !fg.0.is_null() {
@@ -809,10 +809,10 @@ fn apply_visual_config(
 }
 
 fn merge_preview_config(base: &AppConfig, draft: &AppConfig) -> AppConfig {
-    // Keep non-visual/runtime fields from `base` to avoid overriding them with stale draft values.
+    // 実行時の値など表示に関係しない項目は、古い下書きの値で上書きしないよう`base`の値をそのまま使う。
     let mut cfg = base.clone();
 
-    // Display (keep per-monitor saved positions from base).
+    // 表示 (モニターごとの保存済み位置は`base`の値を使う)。
     cfg.display.position = draft.display.position;
     cfg.display.offset_x = draft.display.offset_x;
     cfg.display.offset_y = draft.display.offset_y;
@@ -820,10 +820,10 @@ fn merge_preview_config(base: &AppConfig, draft: &AppConfig) -> AppConfig {
     cfg.display.display_duration_ms = draft.display.display_duration_ms;
     cfg.display.fade_duration_ms = draft.display.fade_duration_ms;
 
-    // Style (all visual).
+    // スタイル (すべて見た目の項目)。
     cfg.style = draft.style.clone();
 
-    // Behavior (display-affecting subset).
+    // 動作 (表示に影響する項目のみ)。
     cfg.behavior.key_transition_mode = draft.behavior.key_transition_mode;
     cfg.behavior.show_repeat_count = draft.behavior.show_repeat_count;
     cfg.behavior.distinguish_numpad = draft.behavior.distinguish_numpad;
@@ -833,11 +833,11 @@ fn merge_preview_config(base: &AppConfig, draft: &AppConfig) -> AppConfig {
     cfg.behavior.clipboard_max_chars = draft.behavior.clipboard_max_chars;
     cfg.behavior.show_lock_indicators = draft.behavior.show_lock_indicators;
 
-    // Performance (OSD size).
+    // 性能 (OSDのサイズ)。
     cfg.performance.osd_width = draft.performance.osd_width;
     cfg.performance.osd_height = draft.performance.osd_height;
 
-    // Animation (visual).
+    // アニメーション (見た目の項目)。
     cfg.animation = draft.animation.clone();
 
     cfg
@@ -921,7 +921,7 @@ fn backup_invalid_config(config_path: &Path) -> Result<PathBuf, std::io::Error> 
     Ok(backup_path)
 }
 
-/// Modifier key + cursor distance determines ghost opacity.
+/// 修飾キーとカーソルの距離からゴーストの不透明度を決める。
 fn calculate_ghost_opacity(window: &OsdWindow, config: &AppConfig) -> f32 {
     unsafe {
         let modifier_down = match config.animation.ghost_modifier {
@@ -947,7 +947,7 @@ fn calculate_ghost_opacity(window: &OsdWindow, config: &AppConfig) -> f32 {
     }
 }
 
-/// Cursor distance to rectangle (0 when inside).
+/// カーソルから矩形までの距離 (矩形の内側にあるときは0)。
 fn distance_to_rect(cursor: &POINT, rect: &RECT) -> f32 {
     let dx = if cursor.x < rect.left {
         rect.left - cursor.x
@@ -966,7 +966,7 @@ fn distance_to_rect(cursor: &POINT, rect: &RECT) -> f32 {
     ((dx * dx + dy * dy) as f32).sqrt()
 }
 
-/// Check whether cursor is inside rectangle.
+/// カーソルが矩形の内側にあるかどうかを返す。
 fn is_cursor_in_rect(rect: &RECT) -> bool {
     unsafe {
         let mut cursor = POINT::default();
@@ -981,7 +981,7 @@ fn is_cursor_in_rect(rect: &RECT) -> bool {
     }
 }
 
-/// Save current window position to config file.
+/// 現在のウィンドウ位置を設定ファイルに保存する。
 fn save_current_position(hwnd: HWND) {
     unsafe {
         let mut rect = RECT::default();
@@ -1010,7 +1010,7 @@ fn save_current_position(hwnd: HWND) {
     }
 }
 
-/// Parse hotkey string and register with RegisterHotKey.
+/// ホットキー文字列を解析し、RegisterHotKeyで登録する。
 fn register_toggle_hotkey(hwnd: HWND, hotkey_str: &str) {
     if hotkey_str.is_empty() {
         return;
@@ -1031,7 +1031,7 @@ fn register_toggle_hotkey(hwnd: HWND, hotkey_str: &str) {
     }
 }
 
-/// Convert hotkey string to (MOD_*, VK).
+/// ホットキー文字列を(MOD_*, VK)に変換する。
 fn parse_hotkey(s: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     let mut modifiers = MOD_NOREPEAT;
     let mut vk = None;
@@ -1049,7 +1049,7 @@ fn parse_hotkey(s: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     Some((modifiers, vk?))
 }
 
-/// Convert key name to Win32 virtual key code.
+/// キー名をWin32の仮想キーコードに変換する。
 fn key_name_to_vk(name: &str) -> Option<u32> {
     let vk = match name {
         "F1" => 0x70,

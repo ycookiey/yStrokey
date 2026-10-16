@@ -44,7 +44,7 @@ fn setup_json_filter(dialog: &IFileDialog) -> Result<(), ystrokey_core::AppError
 
 unsafe fn get_path_from_dialog(dialog: &IFileDialog) -> Result<Option<PathBuf>, ystrokey_core::AppError> {
     if dialog.Show(None).is_err() {
-        return Ok(None); // user cancelled
+        return Ok(None); // ユーザーがキャンセルした
     }
     let result = dialog.GetResult().map_err(win32_err)?;
     let path_raw = result.GetDisplayName(SIGDN_FILESYSPATH).map_err(win32_err)?;
