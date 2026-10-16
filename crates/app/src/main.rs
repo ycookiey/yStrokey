@@ -329,23 +329,34 @@ fn main() {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
 
-    let config_path = std::env::current_exe()
+    let exe_dir = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.join("config.json")))
-        .unwrap_or_else(|| PathBuf::from("config.json"));
-
-    let base_dir = config_path
-        .parent()
-        .map(|p| p.to_path_buf())
+        .and_then(|p| p.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."));
+    let config_dir = user_dir("APPDATA").unwrap_or_else(|| exe_dir.clone());
+    let log_base_dir = user_dir("LOCALAPPDATA").unwrap_or_else(|| exe_dir.clone());
+    let _ = std::fs::create_dir_all(&config_dir);
+    let config_path = config_dir.join("config.json");
+    let migrated = migrate_legacy_config(&exe_dir.join("config.json"), &config_path);
 
     let mut saved_config = load_config_with_recovery(&config_path);
     let mut effective_config = saved_config.clone();
     let mut preview_mode_active = false;
     let mut preview_draft_config: Option<AppConfig> = None;
 
-    logger::init(&base_dir, &saved_config.diagnostics);
+    logger::init(&log_base_dir, &saved_config.diagnostics);
     logger::log(DiagnosticsLevel::Info, "Application startup");
+    match migrated {
+        Ok(true) => logger::log(
+            DiagnosticsLevel::Info,
+            &format!("Copied the config next to the executable to {}", config_path.display()),
+        ),
+        Ok(false) => {}
+        Err(e) => logger::log(
+            DiagnosticsLevel::Warn,
+            &format!("Failed to copy the config next to the executable: {e}"),
+        ),
+    }
 
     let _ = CONFIG_PATH.set(config_path.clone());
     let _ = CURRENT_CONFIG.set(Mutex::new(saved_config.clone()));
@@ -832,6 +843,25 @@ fn merge_preview_config(base: &AppConfig, draft: &AppConfig) -> AppConfig {
     cfg
 }
 
+/// `%<var>%\ystrokey`を返す。設定とログを実行ファイルの横ではなくユーザーのフォルダに置くのは、
+/// Scoopなどのパッケージマネージャーが版ごとに別のフォルダへインストールし、
+/// 実行ファイルの横のファイルが更新のたびに古い版のフォルダに残されるため
+fn user_dir(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(|v| PathBuf::from(v).join("ystrokey"))
+}
+
+/// 実行ファイルの横の設定ファイル`from`を`to`に写す。`to`がすでにあれば写さない。
+/// 実行ファイルの横で設定を読む古い版も動かせるよう、`from`は消さない。写したかを返す
+fn migrate_legacy_config(from: &Path, to: &Path) -> std::io::Result<bool> {
+    if from == to || to.exists() || !from.exists() {
+        return Ok(false);
+    }
+    std::fs::copy(from, to)?;
+    Ok(true)
+}
+
 fn load_config_with_recovery(config_path: &Path) -> AppConfig {
     match AppConfig::load_strict(config_path) {
         Ok(cfg) => cfg,
@@ -1092,3 +1122,40 @@ fn key_name_to_vk(name: &str) -> Option<u32> {
     Some(vk)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        let dir = std::env::temp_dir().join(format!("ystrokey-{name}-{stamp}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn migrate_copies_the_legacy_config_when_none_exists() {
+        let dir = temp_dir("migrate-copy");
+        let (from, to) = (dir.join("old.json"), dir.join("new.json"));
+        std::fs::write(&from, "{}").unwrap();
+        assert!(migrate_legacy_config(&from, &to).unwrap());
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "{}");
+        assert!(from.exists());
+    }
+
+    #[test]
+    fn migrate_keeps_an_existing_config() {
+        let dir = temp_dir("migrate-keep");
+        let (from, to) = (dir.join("old.json"), dir.join("new.json"));
+        std::fs::write(&from, "old").unwrap();
+        std::fs::write(&to, "new").unwrap();
+        assert!(!migrate_legacy_config(&from, &to).unwrap());
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "new");
+    }
+
+    #[test]
+    fn migrate_does_nothing_without_a_legacy_config() {
+        let dir = temp_dir("migrate-none");
+        assert!(!migrate_legacy_config(&dir.join("old.json"), &dir.join("new.json")).unwrap());
+    }
+}

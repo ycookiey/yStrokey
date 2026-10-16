@@ -22,7 +22,7 @@ cargo build --release
 
 ## 設定
 
-初回起動時に `config.json` が自動生成される。編集すればホットリロードで即反映。
+初回起動時に `config.json` が自動生成される。編集すればホットリロードで即反映。設定ファイルの場所は`%APPDATA%\ystrokey\config.json`、ログの場所は`%LOCALAPPDATA%\ystrokey\logs\`。
 
 主な設定項目:
 
