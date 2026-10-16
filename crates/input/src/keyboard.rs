@@ -110,8 +110,8 @@ fn get_current_modifiers() -> Modifiers {
 /// VK と scan_code から実入力文字を取得する。
 /// LL hook では呼出スレッドがキーボードフォーカスを持たないため、
 /// `GetKeyboardState` ではなく `GetAsyncKeyState` から状態を再構築する。
-/// `ToUnicodeEx` の flags=2 はキーボードの内部状態（デッドキーバッファ）を
-/// 変更しないオプション (Win10 1607+)。
+/// `ToUnicodeEx`のflagsのbit 2（値4）は、キーボードの内部状態（デッドキーのバッファ）を
+/// 変えない指定（Windows 10 1607以降）。bit 1（値2）は離したキーも文字に変える別の指定。
 fn resolve_text(vk: u32, scan_code: u32) -> Option<String> {
     unsafe {
         let mut ks = [0u8; 256];
@@ -146,7 +146,7 @@ fn resolve_text(vk: u32, scan_code: u32) -> Option<String> {
         let hkl = GetKeyboardLayout(tid);
 
         let mut buf = [0u16; 8];
-        let n = ToUnicodeEx(vk, scan_code, &ks, &mut buf, 2, hkl);
+        let n = ToUnicodeEx(vk, scan_code, &ks, &mut buf, 4, hkl);
         if n <= 0 {
             return None;
         }
