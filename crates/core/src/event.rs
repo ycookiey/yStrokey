@@ -15,10 +15,10 @@ pub enum InputEvent {
     PreviewMode { enabled: bool },
     /// 設定UI側のドラフト設定を反映するためのプレビュー用設定更新
     PreviewConfig { config: AppConfig },
-    /// DPI変更通知 (モニタ移動等)
+    /// DPI変更通知。モニタの移動などで届く
     DpiChanged {
         dpi: u32,
-        /// suggested rect [left, top, right, bottom]
+        /// 推奨される矩形。[left, top, right, bottom]の順
         suggested_rect: [i32; 4],
     },
     /// 設定がインポート等で外部から変更された通知
@@ -28,9 +28,9 @@ pub enum InputEvent {
 /// キーイベント
 #[derive(Debug, Clone)]
 pub struct KeyEvent {
-    /// キーコード（VK_*に対応、テンキー区別済み）
+    /// キーコード。VK_*に対応し、テンキーを区別済み
     pub key: KeyCode,
-    /// 押下 or 離上
+    /// 押下か離上か
     pub action: KeyAction,
     /// 同時押し修飾キー
     pub modifiers: Modifiers,
@@ -38,8 +38,8 @@ pub struct KeyEvent {
     pub is_numpad: bool,
     /// Win32スキャンコード
     pub scan_code: u32,
-    /// 押下時の実入力文字（Shift/AltGr/レイアウト反映済み、ToUnicodeEx由来）。
-    /// OEMキー等で `label()` が `?` を返すケースのフォールバック表示に使う。
+    /// 押下時の実入力文字。ToUnicodeExで得るので、Shift・AltGr・レイアウトを反映済み。
+    /// OEMキー等で`label()`が`?`を返すケースのフォールバック表示に使う。
     pub text: Option<String>,
     /// イベント発生時刻
     pub timestamp: Instant,
@@ -102,7 +102,7 @@ pub struct ImeEvent {
 pub enum ImeEventKind {
     /// IME ON/OFF切替
     StateChanged { enabled: bool },
-    /// 変換前文字列（ひらがな）の更新
+    /// 変換前のひらがなの文字列の更新
     CompositionUpdate { text: String },
     /// 変換確定
     CompositionEnd { result: String },

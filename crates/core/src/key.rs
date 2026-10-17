@@ -4,7 +4,7 @@
 pub struct KeyCode(pub u32);
 
 impl KeyCode {
-    // --- 数字キー (メインキーボード) ---
+    // --- メインキーボードの数字キー ---
     pub const KEY_0: Self = Self(0x30);
     pub const KEY_1: Self = Self(0x31);
     pub const KEY_2: Self = Self(0x32);
@@ -61,7 +61,7 @@ impl KeyCode {
     pub const NUMPAD_SUBTRACT: Self = Self(0x6D);
     pub const NUMPAD_DECIMAL: Self = Self(0x6E);
     pub const NUMPAD_DIVIDE: Self = Self(0x6F);
-    /// テンキーEnter（通常Enterと区別するため 0x200 | 0x0D）
+    /// テンキーのEnter。通常のEnterと区別するため0x200 | 0x0D
     pub const NUMPAD_ENTER: Self = Self(0x200 | 0x0D);
 
     // --- 修飾キー ---
@@ -110,7 +110,6 @@ impl KeyCode {
     pub const F11: Self = Self(0x7A);
     pub const F12: Self = Self(0x7B);
 
-    /// 表示用ラベルを返す
     pub fn label(&self) -> &'static str {
         match *self {
             // 数字キー
@@ -212,7 +211,7 @@ impl KeyCode {
         }
     }
 
-    /// テンキー区別なしのラベルを返す（Numプレフィクスなし）
+    /// テンキーを区別せず、Numの接頭辞を付けないラベルを返す
     pub fn label_plain(&self) -> &'static str {
         match *self {
             Self::NUMPAD_0 => "0",
@@ -236,7 +235,6 @@ impl KeyCode {
         }
     }
 
-    /// 修飾キーかどうか
     pub fn is_modifier(&self) -> bool {
         matches!(
             *self,
@@ -251,7 +249,6 @@ impl KeyCode {
         )
     }
 
-    /// テンキー由来か
     pub fn is_numpad(&self) -> bool {
         matches!(self.0, 0x60..=0x6F) || *self == Self::NUMPAD_ENTER
     }

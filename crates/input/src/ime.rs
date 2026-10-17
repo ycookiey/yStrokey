@@ -107,7 +107,6 @@ fn collect_ime_targets() -> Vec<HWND> {
     out
 }
 
-/// IME変換中の文字列（ひらがな等）を取得
 pub fn get_composition_string(hwnd: HWND) -> Option<String> {
     unsafe {
         let _attach = InputAttachGuard::maybe_attach(hwnd);
@@ -143,7 +142,6 @@ pub fn get_composition_string(hwnd: HWND) -> Option<String> {
     }
 }
 
-/// IME確定文字列を取得
 pub fn get_result_string(hwnd: HWND) -> Option<String> {
     unsafe {
         let _attach = InputAttachGuard::maybe_attach(hwnd);
@@ -179,7 +177,6 @@ pub fn get_result_string(hwnd: HWND) -> Option<String> {
     }
 }
 
-/// IME ON/OFF状態を取得
 pub fn is_ime_open(hwnd: HWND) -> bool {
     unsafe {
         let _attach = InputAttachGuard::maybe_attach(hwnd);
@@ -195,7 +192,7 @@ pub fn is_ime_open(hwnd: HWND) -> bool {
 
 /// IME状態をポーリングしてイベントを送信
 ///
-/// フォアグラウンドウィンドウのIME状態と変換中文字列をチェックし、
+/// 前面のウィンドウのIME状態と変換中文字列をチェックし、
 /// 前回から変化があった場合にイベントを送信する。
 pub fn poll_ime_state(tx: &SyncSender<InputEvent>) {
     thread_local! {
@@ -234,7 +231,7 @@ pub fn poll_ime_state(tx: &SyncSender<InputEvent>) {
         let _ = tx.try_send(event);
     }
 
-    // 変換中文字列チェック（IME ON/OFF判定に依存せず文字列変化で更新）
+    // 変換中の文字列を確認する。IMEのON/OFFの判定に頼らず、文字列が変わったら更新する
     let changed = PREV_COMPOSITION.with(|c| {
         let prev = c.borrow();
         comp != *prev

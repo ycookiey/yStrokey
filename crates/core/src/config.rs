@@ -10,7 +10,7 @@ use crate::error::ConfigError;
 
 pub const SCHEMA_VERSION: u32 = 2;
 
-/// Strict configuration schema for the app.
+/// アプリの設定を表す厳密なスキーマ。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
@@ -58,7 +58,7 @@ pub enum Position {
 pub struct StyleConfig {
     pub font_family: String,
     pub font_size: f32,
-    /// "#RRGGBB" or "#RRGGBBAA"
+    /// "#RRGGBB"または"#RRGGBBAA"形式
     pub text_color: String,
     pub background_color: String,
     pub border_radius: f32,
@@ -83,12 +83,19 @@ pub struct BehaviorConfig {
     pub max_group_size: usize,
     pub ignored_keys: Vec<String>,
     pub exclude_from_capture: bool,
-    /// 数字行・OEM 記号キーで Shift 押下時、Shift バッジを表示するか。
-    /// false (default) なら `Shift+2` 入力で `"` 単独表示、
-    /// true なら従来どおり `Shift+"` 表示。
-    /// 既存 config 互換のため serde default。
+    /// 数字行・OEM記号キーでShift押下時、Shiftバッジを表示するか。
+    /// 既定はfalse。falseなら`Shift+2`の入力を`"`だけで表示し、
+    /// trueなら`Shift+"`の形で表示する。
+    /// 既存config互換のためserde default。
     #[serde(default)]
     pub show_shift_for_typed_symbols: bool,
+    /// ゲームが前面にある間は、OSDの表示とキー入力の取得を止める
+    #[serde(default = "default_true")]
+    pub pause_in_games: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -248,7 +255,8 @@ impl Default for BehaviorConfig {
             show_repeat_count: true,
             distinguish_numpad: true,
             show_ime_composition: true,
-            show_clipboard: true,
+            // コピーしたパスワードなどの文字列が、配信や録画に気づかないまま映らないよう、既定では表示しない
+            show_clipboard: false,
             clipboard_max_chars: 50,
             show_lock_indicators: true,
             repeat_timeout_ms: 500,
@@ -257,6 +265,7 @@ impl Default for BehaviorConfig {
             ignored_keys: Vec::new(),
             exclude_from_capture: false,
             show_shift_for_typed_symbols: false,
+            pause_in_games: true,
         }
     }
 }
@@ -492,7 +501,7 @@ impl AppConfig {
 
         if config_path.exists() {
             if let Err(replace_err) = replace_file(config_path, &tmp_path) {
-                // Fallback for environments where ReplaceFileW returns ACCESS_DENIED.
+                // ReplaceFileWがACCESS_DENIEDを返す環境向けの代替処理。
                 let direct_write = (|| -> Result<(), std::io::Error> {
                     let mut file = File::create(config_path)?;
                     file.write_all(json.as_bytes())?;
@@ -575,6 +584,14 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir().join(format!("ystrokey-{}-{}.json", name, stamp))
+    }
+
+    #[test]
+    fn pause_in_games_defaults_to_true_when_missing() {
+        let mut json = serde_json::to_value(AppConfig::default()).unwrap();
+        json["behavior"].as_object_mut().unwrap().remove("pause_in_games");
+        let config: AppConfig = serde_json::from_value(json).unwrap();
+        assert!(config.behavior.pause_in_games);
     }
 
     #[test]

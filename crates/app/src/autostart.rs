@@ -10,7 +10,7 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// Set or remove auto-start registry entry
+/// 自動起動のレジストリ値を設定または削除する
 pub fn set_autostart(enable: bool) -> Result<(), AppError> {
     unsafe {
         let key_wide = to_wide(RUN_KEY);
@@ -52,7 +52,7 @@ pub fn set_autostart(enable: bool) -> Result<(), AppError> {
             let result = RegDeleteValueW(hkey, PCWSTR(name_wide.as_ptr()));
             let _ = RegCloseKey(hkey);
             if result.is_err() {
-                // Ignore error if value does not exist
+                // 値が存在しない場合のエラーは無視する
                 return Ok(());
             }
         }
@@ -61,7 +61,6 @@ pub fn set_autostart(enable: bool) -> Result<(), AppError> {
     }
 }
 
-/// Check if auto-start is currently enabled
 pub fn is_autostart_enabled() -> bool {
     unsafe {
         let key_wide = to_wide(RUN_KEY);

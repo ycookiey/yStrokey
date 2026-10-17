@@ -1,36 +1,51 @@
 # yStrokey
 
-Windows向けキー入力視覚化（OSD）ツール。
+入力したキーを画面に表示する、Windowsのオンスクリーンディスプレイ(OSD)ツール。入力したキーが意図どおりかを確認したい人や、配信・録画・解説で入力したキーを表示したい人を対象とする。
+
+## 特徴
+
+- 入力したキーを、画面の最前面の小さなOSDに表示する。OSDはクリックを透過するため、下のウィンドウをそのまま操作できる
+- テンキーを通常の数字キーと区別し、`Ctrl+C`のようなショートカットには`Copy`などのラベルを表示する
+- IMEで入力中の未確定の文字列も表示する
+- 同じキーの連打回数を表示し、短い間隔の連続入力を1つにまとめて表示する
+- 前面のウィンドウがあるモニターにOSDを移動する。位置はモニターごとに保存する
+- ホットキーの`Ctrl+Alt+F12`で、OSDの表示と非表示を切り替える
 
 ## インストール
 
-[Scoop](https://scoop.sh/) 経由:
+[Scoop](https://scoop.sh/)でインストールする。
 
 ```powershell
 scoop bucket add yscoopy https://github.com/ycookiey/yscoopy
-scoop install ystrokey
+scoop install yscoopy/ystrokey
 ```
+
+`ystrokey`を起動すると、タスクトレイにアイコンが表示される。アイコンを右クリックし、メニューの「設定」から設定ウィンドウを開く。設定は`%APPDATA%\ystrokey\config.json`に保存される。`config.json`を直接編集してもよい。
+
+## 注意
+
+- ゲームが前面にある間は、OSDの表示とキー入力の取得を停止する。ゲームの判定には、WindowsがXbox Game Barのために記録しているゲームの一覧を使用する。ゲーム中も表示するには、`behavior.pause_in_games`を`false`にする
+- `privacy.blocked_apps`のアプリが前面にある間は、OSDに何も表示しない。既定はパスワードマネージャーの`KeePass.exe`と`1Password.exe`
+- クリップボードにコピーした文字列は、既定では表示しない。表示するには、`behavior.show_clipboard`を`true`にする
+- 動作確認はWindows 11のみ
+
+## アンインストール
+
+1. タスクトレイのメニューの「自動起動」がチェックされていれば、選択して解除する
+2. タスクトレイのメニューの「終了」で終了する
+3. `scoop uninstall ystrokey`を実行する
+
+アンインストール後も、設定は`%APPDATA%\ystrokey\`に、ログは`%LOCALAPPDATA%\ystrokey\`に残る。不要なら削除する。
 
 ## ビルド
 
-必要環境: Windows 10/11, Rust toolchain (`stable-x86_64-pc-windows-msvc`)
+Rustのツールチェーン`stable-x86_64-pc-windows-msvc`でビルドする。
 
-```bash
+```powershell
 cargo build --release
-./target/release/ystrokey.exe
+.\target\release\ystrokey.exe
 ```
 
-## 設定
+## ライセンス
 
-初回起動時に `config.json` が自動生成される。編集すればホットリロードで即反映。
-
-主な設定項目:
-
-| キー | 説明 | デフォルト |
-|------|------|-----------|
-| `display.position` | 表示位置 | `bottom-center` |
-| `display.max_items` | 最大同時表示数 | `5` |
-| `display.display_duration_ms` | 表示時間 (ms) | `2000` |
-| `behavior.group_timeout_ms` | 連続入力グルーピング閾値 (ms)。0で無効 | `300` |
-| `behavior.max_group_size` | 1グループの最大キー数 | `10` |
-| `hotkey.toggle` | OSD切替ホットキー | `Ctrl+Alt+F12` |
+[MIT License](LICENSE)
