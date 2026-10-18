@@ -20,7 +20,7 @@ scoop bucket add yscoopy https://github.com/ycookiey/yscoopy
 scoop install yscoopy/ystrokey
 ```
 
-`ystrokey`を起動すると、タスクトレイにアイコンが表示される。アイコンを右クリックし、メニューの「設定」から設定ウィンドウを開く。設定は`%APPDATA%\ystrokey\config.json`に保存される。`config.json`を直接編集してもよい。
+`ystrokey`を起動すると、タスクトレイにアイコンが表示される。アイコンを右クリックし、メニューの「設定」から設定ウィンドウを開く。設定は`%APPDATA%\ystrokey\config.json`に保存される。設定ウィンドウのほか、`config.json`の直接編集でも設定を変更できる。
 
 ## 注意
 
