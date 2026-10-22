@@ -35,7 +35,7 @@ impl OsdWindow {
                 ..Default::default()
             };
             RegisterClassExW(&wc);
-            // Primary monitor work area
+            // プライマリモニターの作業領域
             let (x, y) = get_primary_monitor_position(width, height, display_config);
 
             let ex_style = WS_EX_LAYERED
@@ -92,12 +92,11 @@ impl OsdWindow {
         self.height
     }
 
-    /// D2D BindDC 用にメモリDCを公開
     pub fn mem_dc(&self) -> HDC {
         self.mem_dc
     }
 
-    /// UpdateLayeredWindow で画面反映
+    /// UpdateLayeredWindowで画面反映
     pub fn present(&self, opacity: f32) {
         unsafe {
             let size = SIZE {
@@ -125,7 +124,6 @@ impl OsdWindow {
         }
     }
 
-    /// ウィンドウ矩形を取得
     pub fn get_rect(&self) -> RECT {
         unsafe {
             let mut rect = RECT::default();
@@ -134,7 +132,7 @@ impl OsdWindow {
         }
     }
 
-    /// WS_EX_TRANSPARENT の動的切替
+    /// WS_EX_TRANSPARENTの動的切替
     pub fn set_interactive(&self, interactive: bool) {
         unsafe {
             let style = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
@@ -149,7 +147,7 @@ impl OsdWindow {
         }
     }
 
-    /// SetWindowDisplayAffinity でキャプチャ防止 (Win10 v2004+)
+    /// SetWindowDisplayAffinityでキャプチャを防ぐ。Win10 v2004以降で使える
     pub fn set_display_affinity(&self, exclude: bool) {
         unsafe {
             let affinity = if exclude {
@@ -177,7 +175,7 @@ impl OsdWindow {
 
     pub fn resize(&mut self, width: i32, height: i32) {
         unsafe {
-            // 新DIBセクションを先に作成（失敗時は旧DIBを維持）
+            // 失敗したときに旧DIBを維持できるよう、新DIBセクションを先に作成する
             let bmi = create_bitmapinfo(width, height);
             let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
             let new_dib = CreateDIBSection(
@@ -220,7 +218,7 @@ impl OsdWindow {
         self.set_position(suggested_rect.left, suggested_rect.top);
     }
 
-    /// Reposition OSD to the monitor of the target window.
+    /// OSDを対象ウィンドウのあるモニターに移動する。
     /// 保存済み位置があればそれを使用し、なければDisplayConfigの設定で計算。
     pub fn reposition_to_monitor(
         &self,
@@ -256,8 +254,8 @@ impl OsdWindow {
                     )
                 };
 
-                // Keep the OSD window within the monitor work area so it can't "disappear"
-                // due to stale saved positions or extreme offsets.
+                // 保存済みの位置が古い場合や極端なオフセットでOSDが画面の外に出ないよう、
+                // OSDのウィンドウをモニターの作業領域の中に収める。
                 let min_x = work.left;
                 let max_x = (work.right - self.width).max(min_x);
                 let min_y = work.top;
@@ -311,7 +309,7 @@ fn create_bitmapinfo(width: i32, height: i32) -> BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: mem::size_of::<BITMAPINFOHEADER>() as u32,
             biWidth: width,
-            biHeight: -height, // top-down DIB (負値で上→下)
+            biHeight: -height, // 負値でtop-down DIB(上から下)
             biPlanes: 1,
             biBitCount: 32,
             ..Default::default()
@@ -320,7 +318,7 @@ fn create_bitmapinfo(width: i32, height: i32) -> BITMAPINFO {
     }
 }
 
-/// Position enum + work area から OSD の座標を計算
+/// Positionとモニターの作業領域からOSDの座標を計算する
 fn compute_position(
     pos: &Position,
     work: &RECT,
@@ -344,7 +342,7 @@ fn compute_position(
     (base_x + offset_x, base_y + offset_y)
 }
 
-/// Compute initial OSD position from primary monitor work area
+/// プライマリモニターの作業領域からOSDの初期位置を計算する
 unsafe fn get_primary_monitor_position(width: i32, height: i32, display_config: &DisplayConfig) -> (i32, i32) {
     let pt = POINT { x: 0, y: 0 };
     let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
@@ -368,7 +366,6 @@ unsafe fn get_primary_monitor_position(width: i32, height: i32, display_config: 
     }
 }
 
-/// モニタのデバイス名を取得
 pub fn get_monitor_device_name(hmon: HMONITOR) -> Option<String> {
     unsafe {
         let mut mi = MONITORINFOEXW::default();

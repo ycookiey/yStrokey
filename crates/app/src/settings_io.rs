@@ -44,7 +44,7 @@ fn setup_json_filter(dialog: &IFileDialog) -> Result<(), ystrokey_core::AppError
 
 unsafe fn get_path_from_dialog(dialog: &IFileDialog) -> Result<Option<PathBuf>, ystrokey_core::AppError> {
     if dialog.Show(None).is_err() {
-        return Ok(None); // user cancelled
+        return Ok(None); // ユーザーがキャンセルした
     }
     let result = dialog.GetResult().map_err(win32_err)?;
     let path_raw = result.GetDisplayName(SIGDN_FILESYSPATH).map_err(win32_err)?;
@@ -52,7 +52,6 @@ unsafe fn get_path_from_dialog(dialog: &IFileDialog) -> Result<Option<PathBuf>, 
     Ok(Some(PathBuf::from(path_str)))
 }
 
-/// ファイル保存ダイアログで設定をエクスポート
 pub fn export_config(config: &AppConfig) -> Result<(), ystrokey_core::AppError> {
     unsafe {
         let _com = ComGuard::new();
@@ -60,7 +59,7 @@ pub fn export_config(config: &AppConfig) -> Result<(), ystrokey_core::AppError> 
         let dialog: IFileSaveDialog =
             CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL).map_err(win32_err)?;
 
-        // IFileSaveDialog は IFileDialog を Deref で継承
+        // IFileSaveDialogはIFileDialogをDerefで継承
         setup_json_filter(&dialog)?;
         let _ = dialog.SetDefaultExtension(&HSTRING::from("json"));
         let _ = dialog.SetFileName(&HSTRING::from("ystrokey_config.json"));
@@ -72,7 +71,6 @@ pub fn export_config(config: &AppConfig) -> Result<(), ystrokey_core::AppError> 
     }
 }
 
-/// ファイル選択ダイアログで設定をインポート
 pub fn import_config() -> Result<Option<AppConfig>, ystrokey_core::AppError> {
     unsafe {
         let _com = ComGuard::new();

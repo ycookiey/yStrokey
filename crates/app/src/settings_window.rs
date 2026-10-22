@@ -99,6 +99,7 @@ const ID_BEHAVIOR_MAX_GROUP_SIZE: u16 = 1309;
 const ID_BEHAVIOR_IGNORED_KEYS: u16 = 1310;
 const ID_BEHAVIOR_EXCLUDE_CAPTURE: u16 = 1311;
 const ID_BEHAVIOR_SHIFT_TYPED_SYMBOLS: u16 = 1312;
+const ID_BEHAVIOR_PAUSE_IN_GAMES: u16 = 1313;
 
 const ID_PRIVACY_ENABLED: u16 = 1400;
 const ID_PRIVACY_BLOCKED_APPS: u16 = 1401;
@@ -128,14 +129,14 @@ const ID_ANIM_FADE_CURVE: u16 = 1903;
 fn should_request_preview(changed_control_id: u16) -> bool {
     matches!(
         changed_control_id,
-        // Display
+        // 表示
         ID_DISPLAY_POSITION
             | ID_DISPLAY_OFFSET_X
             | ID_DISPLAY_OFFSET_Y
             | ID_DISPLAY_MAX_ITEMS
             | ID_DISPLAY_DURATION
             | ID_DISPLAY_FADE
-            // Style
+            // スタイル
             | ID_STYLE_FONT_FAMILY
             | ID_STYLE_FONT_SIZE
             | ID_STYLE_TEXT_COLOR
@@ -145,7 +146,7 @@ fn should_request_preview(changed_control_id: u16) -> bool {
             | ID_STYLE_SHORTCUT_COLOR
             | ID_STYLE_KEY_DOWN_COLOR
             | ID_STYLE_OPACITY
-            // Behavior (display affects)
+            // 動作。表示に影響する項目
             | ID_BEHAVIOR_KEY_TRANSITION_MODE
             | ID_BEHAVIOR_SHOW_REPEAT_COUNT
             | ID_BEHAVIOR_DISTINGUISH_NUMPAD
@@ -154,10 +155,10 @@ fn should_request_preview(changed_control_id: u16) -> bool {
             | ID_BEHAVIOR_SHOW_CLIPBOARD
             | ID_BEHAVIOR_CLIPBOARD_MAX_CHARS
             | ID_BEHAVIOR_SHOW_LOCK
-            // Performance (OSD size)
+            // 性能。OSDのサイズ
             | ID_PERF_OSD_WIDTH
             | ID_PERF_OSD_HEIGHT
-            // Animation (visual)
+            // アニメーション。見た目の項目
             | ID_ANIM_GHOST_MODIFIER
             | ID_ANIM_GHOST_THRESHOLD
             | ID_ANIM_GHOST_MAX_OPACITY
@@ -168,9 +169,9 @@ fn should_request_preview(changed_control_id: u16) -> bool {
 fn should_live_preview_on_change(changed_control_id: u16) -> bool {
     matches!(
         changed_control_id,
-        // Display (positioning)
+        // 表示。位置
         ID_DISPLAY_OFFSET_X | ID_DISPLAY_OFFSET_Y
-        // Style (most visual edits are safe to reflect immediately)
+        // スタイル。見た目の編集は、ほとんどを即座に反映しても安全
         | ID_STYLE_FONT_FAMILY
             | ID_STYLE_FONT_SIZE
             | ID_STYLE_TEXT_COLOR
@@ -180,7 +181,7 @@ fn should_live_preview_on_change(changed_control_id: u16) -> bool {
             | ID_STYLE_SHORTCUT_COLOR
             | ID_STYLE_KEY_DOWN_COLOR
             | ID_STYLE_OPACITY
-        // Animation (visual)
+        // アニメーション。見た目の項目
         | ID_ANIM_GHOST_THRESHOLD
             | ID_ANIM_GHOST_MAX_OPACITY
     )
@@ -309,7 +310,7 @@ unsafe extern "system" fn settings_wnd_proc(
         WM_DESTROY => {
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut SettingsState;
             if !ptr.is_null() {
-                // Disable preview mode when the settings window is closed.
+                // 設定ウィンドウを閉じたときにプレビューモードを無効にする。
                 let state = &mut *ptr;
                 if let Some(tx) = &state.notify_tx {
                     let _ = tx.try_send(InputEvent::PreviewMode { enabled: false });
@@ -418,6 +419,7 @@ unsafe fn rebuild_category(hwnd: HWND, state: &mut SettingsState) {
             add_edit_row(hwnd, state, "Group timeout (ms)", ID_BEHAVIOR_GROUP_TIMEOUT, &cfg.behavior.group_timeout_ms.to_string(), &mut y);
             add_edit_row(hwnd, state, "Max group size", ID_BEHAVIOR_MAX_GROUP_SIZE, &cfg.behavior.max_group_size.to_string(), &mut y);
             add_check_row(hwnd, state, "Exclude from capture", ID_BEHAVIOR_EXCLUDE_CAPTURE, cfg.behavior.exclude_from_capture, &mut y);
+            add_check_row(hwnd, state, "Pause while a game is in the foreground", ID_BEHAVIOR_PAUSE_IN_GAMES, cfg.behavior.pause_in_games, &mut y);
             add_multiline_row(
                 hwnd,
                 state,
@@ -824,6 +826,7 @@ unsafe fn apply_control_to_config(parent: HWND, id: u16, cfg: &mut AppConfig) ->
             cfg.behavior.ignored_keys = split_lines(&text);
         }
         ID_BEHAVIOR_EXCLUDE_CAPTURE => cfg.behavior.exclude_from_capture = get_checkbox(parent, id),
+        ID_BEHAVIOR_PAUSE_IN_GAMES => cfg.behavior.pause_in_games = get_checkbox(parent, id),
 
         ID_PRIVACY_ENABLED => cfg.privacy.enabled = get_checkbox(parent, id),
         ID_PRIVACY_BLOCKED_APPS => {
@@ -1059,7 +1062,7 @@ pub fn open_settings_window(
             rebuilding: false,
         });
 
-        // While settings are open, keep preview visible regardless of OSD enabled/privacy state.
+        // 設定ウィンドウを開いている間は、OSDの有効状態やプライバシー状態にかかわらずプレビューを表示し続ける。
         if let Some(tx) = &state.notify_tx {
             let _ = tx.try_send(InputEvent::PreviewMode { enabled: true });
         }

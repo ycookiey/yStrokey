@@ -35,7 +35,7 @@ impl TrayIcon {
                 ..Default::default()
             };
 
-            // ツールチップ（szTip: [u16; 128] 固定長配列）
+            // ツールチップ。szTipは長さ128の[u16]の固定長配列
             let tip: Vec<u16> = "yStrokey"
                 .encode_utf16()
                 .chain(std::iter::once(0))
@@ -66,7 +66,6 @@ impl Drop for TrayIcon {
     }
 }
 
-/// トレイ右クリックメニューを表示
 pub fn show_context_menu(
     hwnd: HWND,
     menu_language: MenuLanguage,
@@ -151,7 +150,7 @@ pub fn show_context_menu(
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
 
-        // TrackPopupMenu が正しくメニューを閉じるために必須
+        // TrackPopupMenuが正しくメニューを閉じるために必須
         let _ = SetForegroundWindow(hwnd);
 
         let _ = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, pt.x, pt.y, 0, hwnd, None);

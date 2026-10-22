@@ -59,7 +59,7 @@ pub fn log(level: DiagnosticsLevel, message: &str) {
         .as_secs();
     let line = format!("[{}][{}] {}\n", now, level_name(level), message);
 
-    // Keep stderr output for visibility in development.
+    // 開発中に確認できるよう、ログファイルへの出力の有無にかかわらず標準エラー出力に書く。
     eprint!("{}", line);
 
     if logger.config.file_logging_enabled {

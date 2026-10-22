@@ -4,7 +4,6 @@ use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 use ystrokey_core::config::PrivacyConfig;
 
-/// Get the exe name of the foreground window process
 pub fn get_foreground_process_name() -> Option<String> {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -38,7 +37,6 @@ pub fn get_foreground_process_name() -> Option<String> {
     }
 }
 
-/// Check if the foreground app is a privacy target
 pub fn is_privacy_target(config: &PrivacyConfig) -> bool {
     if !config.enabled || config.blocked_apps.is_empty() {
         return false;
@@ -48,7 +46,7 @@ pub fn is_privacy_target(config: &PrivacyConfig) -> bool {
             .blocked_apps
             .iter()
             .any(|app| app.eq_ignore_ascii_case(&name)),
-        // プロセス名取得失敗時は安全側（非表示）に倒す
+        // プロセス名を取得できなかったときは、安全側の非表示にする
         None => true,
     }
 }

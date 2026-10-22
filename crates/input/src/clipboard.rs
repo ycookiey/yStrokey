@@ -8,14 +8,13 @@ use windows::Win32::System::Ole::CF_UNICODETEXT;
 
 /// クリップボード変更リスナー
 ///
-/// `AddClipboardFormatListener` で登録し、Drop時に `RemoveClipboardFormatListener` で解除。
-/// WM_CLIPBOARDUPDATE メッセージで変更通知を受信する。
+/// `AddClipboardFormatListener`で登録し、Drop時に`RemoveClipboardFormatListener`で解除。
+/// WM_CLIPBOARDUPDATEメッセージで変更通知を受信する。
 pub struct ClipboardListener {
     hwnd: HWND,
 }
 
 impl ClipboardListener {
-    /// クリップボード監視を開始
     pub fn new(hwnd: HWND) -> windows::core::Result<Self> {
         unsafe {
             AddClipboardFormatListener(hwnd)?;
@@ -23,7 +22,6 @@ impl ClipboardListener {
         Ok(Self { hwnd })
     }
 
-    /// クリップボードからUnicodeテキストを取得
     pub fn get_text(hwnd: HWND) -> Option<String> {
         unsafe {
             if IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_err() {
@@ -34,7 +32,7 @@ impl ClipboardListener {
                 return None;
             }
 
-            // CloseClipboard を確実に呼ぶため、クロージャで本体を実行
+            // CloseClipboardを確実に呼ぶため、クロージャで本体を実行
             let result = (|| -> Option<String> {
                 let handle = GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?;
                 let hglobal = HGLOBAL(handle.0);
@@ -48,7 +46,7 @@ impl ClipboardListener {
                     return None;
                 }
 
-                // null終端までの長さを計算（GlobalSize上限付き）
+                // null終端までの長さを計算する。上限はGlobalSize
                 let mut len = 0;
                 while len < max_u16_len && *ptr.add(len) != 0 {
                     len += 1;

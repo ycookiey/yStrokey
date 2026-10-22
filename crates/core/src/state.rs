@@ -25,19 +25,19 @@ pub struct DisplayState {
     ime_composing: bool,
     /// OSのIME APIから取得したネイティブ変換中表示か
     ime_native_composing: bool,
-    /// IME ON/OFF のフォールバック状態
+    /// IME ON/OFFのフォールバック状態
     ime_fallback_enabled: bool,
     /// IMEフォールバック用のローマ字バッファ
     ime_fallback_romaji: String,
 }
 
-/// 表示アイテム（OSD上の1つの表示要素）
+/// OSD上の1つの表示要素
 #[derive(Debug, Clone)]
 pub struct DisplayItem {
     pub id: u64,
     pub kind: DisplayItemKind,
     pub created_at: Instant,
-    /// 0.0（透明）〜 1.0（不透明）
+    /// 0.0で透明、1.0で不透明
     pub opacity: f32,
     /// フェーズ
     pub phase: DisplayPhase,
@@ -52,11 +52,11 @@ pub enum DisplayItemKind {
         action: KeyAction,
         repeat_count: u32,
     },
-    /// 連続キー入力グループ（水平並列表示）
+    /// 連続したキー入力のグループ。水平に並べて表示する
     KeyStrokeGroup {
         strokes: Vec<KeyStrokeEntry>,
     },
-    /// ショートカットキー（特殊表示）
+    /// ショートカットキー。特別な表示にする
     Shortcut {
         keys_label: String,
         action_label: String,
@@ -84,11 +84,11 @@ pub struct KeyStrokeEntry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayPhase {
-    /// 表示中（フルopacity）
+    /// 表示中。不透明度は最大
     Active,
     /// フェードアウト中
     FadingOut,
-    /// 期限切れ（削除対象）
+    /// 期限切れ。削除する
     Expired,
 }
 
@@ -221,18 +221,18 @@ impl DisplayState {
     }
 
     fn process_key_event(&mut self, ke: KeyEvent) {
-        // Key filter: skip ignored keys (case-insensitive, always use full label)
+        // キーフィルター: 無視するキーを除外する。大文字と小文字を区別せず、常に完全なラベルで比べる
         let full_label = ke.key.label();
         if self.config.behavior.ignored_keys.iter().any(|k| k.eq_ignore_ascii_case(full_label)) {
             return;
         }
 
-        // IME切替キーは常に捕捉（"?"表示を防ぐ）
+        // "?"の表示を防ぐため、IME切替キーは常に捕捉する
         if self.handle_ime_toggle_key(&ke) {
             return;
         }
 
-        // IMEフォールバック入力（Composition取得失敗時の救済）
+        // IMEのフォールバック入力。Compositionを取得できなかったときに使う
         if self.handle_ime_fallback_key(&ke) {
             return;
         }
@@ -244,16 +244,16 @@ impl DisplayState {
 
         let now = ke.timestamp;
 
-        // 表示ラベル: distinguish_numpad に応じてテンキー区別を制御
+        // 表示ラベル: distinguish_numpadに応じてテンキー区別を制御
         let base_label = if self.config.behavior.distinguish_numpad {
             ke.key.label()
         } else {
             ke.key.label_plain()
         };
-        // 以下のキーは ToUnicodeEx 由来の実入力文字 (text) を優先表示する:
-        //   - OEM範囲 (VK 0xBA-0xE2): label() が "?" になる記号キー (`_` `\` 等)
-        //   - 数字行 (VK 0x30-0x39): Shift で記号に変わる (`Shift+2` → `"` 等)
-        // ショートカット判定や IME 関連は base_label / VK ベースのまま維持。
+        // 以下のキーはToUnicodeExで得た実入力文字のtextを優先して表示する:
+        //   - OEMキーの範囲(VK 0xBA-0xE2): label()が"?"になる記号キー(`_` `\`など)
+        //   - 数字行(VK 0x30-0x39): Shiftで記号に変わるキー(`Shift+2` → `"`など)
+        // ショートカット判定やIME関連はbase_label / VKベースのまま維持。
         let prefer_text = {
             let vk = ke.key.0 & 0xFF;
             (0xBA..=0xE2).contains(&vk) || (0x30..=0x39).contains(&vk)
@@ -269,10 +269,10 @@ impl DisplayState {
         } else {
             base_label
         };
-        // text 優先キー（記号化される範囲）では Shift キーバッジを抑制する。
-        // Down だけでなく Up でも同様にしないと、Up側で `Shift+"` が出てしまう。
-        // Ctrl/Alt/Win は別の意味を持つので残す。
-        // 設定で Shift バッジ表示を有効化されているときは抑制しない。
+        // text優先キーでは、記号に変わる範囲でShiftキーのバッジを抑制する。
+        // DownだけでなくUpでも同様にしないと、Up側で`Shift+"`が出てしまう。
+        // Ctrl/Alt/Winは別の意味を持つので残す。
+        // 設定でShiftバッジ表示を有効化されているときは抑制しない。
         let suppress_shift =
             prefer_text && !self.config.behavior.show_shift_for_typed_symbols;
         let display_modifiers = if suppress_shift {
@@ -334,7 +334,7 @@ impl DisplayState {
                     )
                 };
 
-                // 連打カウント（show_repeat_count が有効な場合のみ追跡）
+                // 連打カウントは、show_repeat_countが有効なときだけ追跡する
                 if self.config.behavior.key_transition_mode == KeyTransitionMode::SingleCell {
                     self.active_presses
                         .insert(PressKey::from_key_event(&ke), target);
@@ -493,7 +493,6 @@ impl DisplayState {
         );
     }
 
-    /// 時間経過処理（毎フレーム呼び出し）
     pub fn tick(&mut self, now: Instant) {
         let display_dur =
             Duration::from_millis(self.config.display.display_duration_ms);
@@ -534,7 +533,6 @@ impl DisplayState {
         &self.items
     }
 
-    /// 全アイテムをクリア（privacy遷移時等）
     pub fn clear(&mut self) {
         self.items.clear();
         self.active_presses.clear();
@@ -549,7 +547,6 @@ impl DisplayState {
             .any(|i| i.phase == DisplayPhase::FadingOut)
     }
 
-    /// 設定を更新（ホットリロード用）
     pub fn update_config(&mut self, config: &AppConfig) {
         let now = Instant::now();
         if self.config.behavior.key_transition_mode != config.behavior.key_transition_mode {
@@ -561,7 +558,7 @@ impl DisplayState {
         self.rebuild_preview_items(now);
     }
 
-    // --- private helpers ---
+    // --- 内部ヘルパー ---
 
     fn add_item(&mut self, kind: DisplayItemKind, now: Instant) -> u64 {
         let item_id = self.next_id;
@@ -628,7 +625,7 @@ impl DisplayState {
                         action: ref a,
                         repeat_count: ref rc,
                     } => {
-                        // KeyStroke → KeyStrokeGroup に昇格
+                        // KeyStroke → KeyStrokeGroupに昇格
                         let first = KeyStrokeEntry {
                             label: l.clone(),
                             modifiers: *m,
@@ -650,7 +647,7 @@ impl DisplayState {
                             grouped_target =
                                 Some(PressTarget::group(last_item.id, strokes.len() - 1));
                         }
-                        // max_group_size に達したら新行へ
+                        // max_group_sizeに達したら新行へ
                     }
                     _ => {}
                 }
@@ -798,7 +795,7 @@ impl DisplayState {
         const VK_OEM_3: u32 = 0xC0;
 
         let vk = ke.key.0 & 0xFF;
-        // 日本語キーボードの半角/全角は環境により VK が異なるため scan_code を最優先。
+        // 日本語キーボードの半角/全角は環境によりVKが異なるためscan_codeを最優先。
         let is_hankaku_zenkaku = ke.scan_code == 0x29 || (vk == VK_OEM_3 && ke.scan_code == 0x29);
 
         if !matches!(vk, VK_KANA | VK_IME_ON | VK_KANJI | VK_IME_OFF) && !is_hankaku_zenkaku {
@@ -908,7 +905,6 @@ impl DisplayState {
     }
 }
 
-/// ショートカット定義文字列がキーイベントにマッチするか判定
 fn shortcut_matches(keys_str: &str, ke: &KeyEvent) -> bool {
     let parts: Vec<&str> = keys_str.split('+').collect();
     if parts.is_empty() {
@@ -951,14 +947,14 @@ fn should_suppress_during_ime_composition(ke: &KeyEvent) -> bool {
         return false;
     }
 
-    // VKの下位1byteを使用（拡張値は除外）
+    // 拡張値を除くため、VKの下位1byteを使う
     let vk = ke.key.0 & 0xFF;
     (0x30..=0x5A).contains(&vk) || (0xBA..=0xE2).contains(&vk)
 }
 
 fn build_preview_items(config: &AppConfig, now: Instant) -> Vec<DisplayItem> {
-    // Preview items are always "active" and do not fade; they are rendered separately
-    // from live OSD items.
+    // プレビュー項目は常にアクティブな状態のままでフェードしない。実際のOSD項目とは
+    // 別に描画する。
     let mut items = Vec::new();
     let mut id = 1u64;
     let opacity = 0.85;
@@ -1072,7 +1068,7 @@ fn romaji_to_hiragana(romaji: &str) -> String {
     let mut i = 0usize;
 
     while i < bytes.len() {
-        // 促音（小さい「っ」）: 子音重複（nn除く）
+        // 促音の小さい「っ」: 子音の重複。nnは除く
         if i + 1 < bytes.len()
             && bytes[i] == bytes[i + 1]
             && is_romaji_consonant(bytes[i] as char)
