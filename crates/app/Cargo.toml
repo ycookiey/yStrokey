@@ -13,3 +13,6 @@ ystrokey-input = { path = "../input" }
 ystrokey-render = { path = "../render" }
 windows = { workspace = true }
 log = { workspace = true }
+
+[build-dependencies]
+embed-resource = "3"
