@@ -1,5 +1,6 @@
 mod autostart;
 mod logger;
+mod resources;
 mod settings_io;
 mod settings_window;
 mod tray;
@@ -285,6 +286,13 @@ unsafe extern "system" fn app_wnd_proc(
                 }
             }
             LRESULT(0)
+        }
+        WM_SETTINGCHANGE => {
+            // タスクバーのライト/ダークが切り替わったらトレイアイコンを差し替える
+            if tray::is_color_set_change(lparam) {
+                tray::update_icon_for_theme(hwnd);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_DESTROY => {
             PostQuitMessage(0);

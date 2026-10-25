@@ -6,12 +6,15 @@ use std::sync::mpsc::SyncSender;
 use windows::core::HSTRING;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use ystrokey_core::{
     AppConfig, DiagnosticsLevel, FadeOutCurve, GhostModifier, InputEvent, KeyTransitionMode,
     MenuLanguage, Position, ShortcutDef,
 };
+
+use crate::resources::IDI_APP;
 
 struct SettingsState {
     config: AppConfig,
@@ -932,6 +935,23 @@ fn parse_shortcuts(text: &str) -> Result<Vec<ShortcutDef>, String> {
     Ok(shortcuts)
 }
 
+/// exeに埋め込んだアプリのアイコンを、指定のシステムメトリクスの大きさで読み込む。LR_SHAREDなので破棄しない
+unsafe fn load_app_icon(cx: SYSTEM_METRICS_INDEX, cy: SYSTEM_METRICS_INDEX) -> HICON {
+    let Ok(instance) = GetModuleHandleW(None) else {
+        return HICON::default();
+    };
+    LoadImageW(
+        HINSTANCE(instance.0),
+        windows::core::PCWSTR(IDI_APP as usize as *const u16),
+        IMAGE_ICON,
+        GetSystemMetrics(cx),
+        GetSystemMetrics(cy),
+        LR_SHARED,
+    )
+    .map(|h| HICON(h.0))
+    .unwrap_or_default()
+}
+
 fn position_index(pos: Position) -> i32 {
     match pos {
         Position::TopLeft => 0,
@@ -982,6 +1002,8 @@ pub fn open_settings_window(
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(settings_wnd_proc),
+            hIcon: load_app_icon(SM_CXICON, SM_CYICON),
+            hIconSm: load_app_icon(SM_CXSMICON, SM_CYSMICON),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             hbrBackground: GetSysColorBrush(COLOR_WINDOW),
             lpszClassName: windows::core::PCWSTR(class_name.as_ptr()),
