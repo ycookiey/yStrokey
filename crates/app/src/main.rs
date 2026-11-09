@@ -592,6 +592,9 @@ fn main() {
                     if game { "game: enter (OSD, IME polling and keyboard hook off)" } else { "game: leave" },
                 );
             }
+            if !in_game && window.ensure_topmost() {
+                logger::log(DiagnosticsLevel::Info, "OSD was below normal windows: restored to topmost");
+            }
             let fg = unsafe { GetForegroundWindow() };
             if fg != last_foreground_hwnd {
                 last_foreground_hwnd = fg;

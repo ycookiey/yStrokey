@@ -159,6 +159,30 @@ impl OsdWindow {
         }
     }
 
+    /// 最前面に戻したらtrueを返す。
+    /// WS_EX_TOPMOSTが立ったままでも順番だけ下がることがあるので、スタイルではなく実際の順番を見る
+    pub fn ensure_topmost(&self) -> bool {
+        unsafe {
+            let mut above = GetWindow(self.hwnd, GW_HWNDPREV);
+            while let Ok(hwnd) = above {
+                if GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & (WS_EX_TOPMOST.0 as isize) == 0 {
+                    return SetWindowPos(
+                        self.hwnd,
+                        HWND_TOPMOST,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                    )
+                    .is_ok();
+                }
+                above = GetWindow(hwnd, GW_HWNDPREV);
+            }
+            false
+        }
+    }
+
     pub fn set_position(&self, x: i32, y: i32) {
         unsafe {
             let _ = SetWindowPos(
